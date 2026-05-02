@@ -212,11 +212,10 @@ export class PricingViewProvider {
     <div class="nav">
       <div class="btn-group">
         <button class="btn-tab" onclick="post('showDashboard')">🧠 Dashboard</button>
-        <button class="btn-tab" onclick="post('showCharts')">📊 Charts</button>
         <button class="btn-tab" onclick="post('showUsageAnalysis')">📈 Usage</button>
-        <button class="btn-tab" onclick="post('showDiagnostics')">🩺 Diagnostics</button>
         <button class="btn-tab" onclick="post('showSessions')">📋 Sessions</button>
         <button class="btn-tab active">💳 Pricing</button>
+        <button class="btn-tab" onclick="post('showDiagnostics')">🩺 Diagnostics</button>
       </div>
     </div>
   </div>

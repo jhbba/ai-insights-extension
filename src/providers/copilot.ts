@@ -16,6 +16,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { BaseProvider } from './base';
 import { Session, Interaction } from '../types';
+import { calculateCost } from '../core/costEstimation';
 
 const COPILOT_EXTENSION_FOLDERS = [
   'GitHub.copilot-chat',
@@ -215,7 +216,7 @@ export class CopilotProvider extends BaseProvider {
         if (interactions.length === 0) { startTime = timestamp; }
         endTime = timestamp;
 
-        const model = this.getModelFromRequest(req, data.model || 'unknown');
+        const model = this.getModelFromRequest(req, data.model || 'gpt-5-mini');
         const inputText = this.extractInputText(req);
         const outputText = this.extractResponseText(req.response || req.responses);
 
@@ -273,6 +274,21 @@ export class CopilotProvider extends BaseProvider {
       if (interactions.length === 0) { return null; }
 
       const totalTokens = interactions.reduce((sum, i) => sum + i.totalTokens, 0);
+      const totalInputTokens = interactions.reduce((s, i) => s + i.inputTokens, 0);
+      const totalOutputTokens = interactions.reduce((s, i) => s + i.outputTokens, 0);
+      const totalCacheReadTokens = interactions.reduce((s, i) => s + i.cacheReadTokens, 0);
+      const totalCacheWriteTokens = interactions.reduce((s, i) => s + i.cacheWriteTokens, 0);
+      const primaryModel = interactions[interactions.length - 1]?.model || 'gpt-5-mini';
+      const estimatedCostUsd = calculateCost(primaryModel, totalInputTokens, totalOutputTokens, totalCacheReadTokens, totalCacheWriteTokens);
+
+      // Extract title from data or first message
+      let title = data.title;
+      if (!title && requests[0]) {
+        const firstInput = this.extractInputText(requests[0]);
+        if (firstInput) {
+          title = firstInput.split('\n')[0].substring(0, 80);
+        }
+      }
 
       return {
         id: data.sessionId || path.basename(filePath, path.extname(filePath)),
@@ -282,14 +298,16 @@ export class CopilotProvider extends BaseProvider {
         endTime,
         interactions,
         totalTokens,
-        totalInputTokens: interactions.reduce((s, i) => s + i.inputTokens, 0),
-        totalOutputTokens: interactions.reduce((s, i) => s + i.outputTokens, 0),
+        totalInputTokens,
+        totalOutputTokens,
         totalThinkingTokens: interactions.reduce((s, i) => s + i.thinkingTokens, 0),
-        totalCacheReadTokens: interactions.reduce((s, i) => s + i.cacheReadTokens, 0),
-        totalCacheWriteTokens: interactions.reduce((s, i) => s + i.cacheWriteTokens, 0),
+        totalCacheReadTokens,
+        totalCacheWriteTokens,
         models: [...new Set(interactions.map(i => i.model))],
         workspace: this.extractWorkspace(filePath),
         sourceFile: filePath,
+        title,
+        estimatedCostUsd,
       };
     } catch {
       return null;
@@ -320,7 +338,7 @@ export class CopilotProvider extends BaseProvider {
           if (!startTime) { startTime = timestamp; }
           endTime = timestamp;
 
-          const model = this.normalizeModelId(entry.model || entry.modelId || 'unknown');
+          const model = this.normalizeModelId(entry.model || entry.modelId || 'gpt-5-mini');
           const cacheReadTokens = this.pickTokenCount(entry, [
             'tokens.cacheRead', 'tokens.cache_read', 'tokens.cachedInput', 'tokens.cached_input',
             'usage.cache_read_input_tokens', 'usage.cached_tokens', 'usage.cached_input_tokens',
@@ -362,7 +380,12 @@ export class CopilotProvider extends BaseProvider {
 
       if (interactions.length === 0) { return null; }
 
-      const totalTokens = interactions.reduce((sum, i) => sum + i.totalTokens, 0);
+      const totalInputTokens = interactions.reduce((s, i) => s + i.inputTokens, 0);
+      const totalOutputTokens = interactions.reduce((s, i) => s + i.outputTokens, 0);
+      const totalCacheReadTokens = interactions.reduce((s, i) => s + i.cacheReadTokens, 0);
+      const totalCacheWriteTokens = interactions.reduce((s, i) => s + i.cacheWriteTokens, 0);
+      const primaryModel = interactions[interactions.length - 1]?.model || 'gpt-5-mini';
+      const estimatedCostUsd = calculateCost(primaryModel, totalInputTokens, totalOutputTokens, totalCacheReadTokens, totalCacheWriteTokens);
 
       return {
         id: path.basename(filePath, '.jsonl'),
@@ -371,15 +394,16 @@ export class CopilotProvider extends BaseProvider {
         startTime: startTime || fallbackTimestamp,
         endTime,
         interactions,
-        totalTokens,
-        totalInputTokens: interactions.reduce((s, i) => s + i.inputTokens, 0),
-        totalOutputTokens: interactions.reduce((s, i) => s + i.outputTokens, 0),
+        totalTokens: interactions.reduce((sum, i) => sum + i.totalTokens, 0),
+        totalInputTokens,
+        totalOutputTokens,
         totalThinkingTokens: interactions.reduce((s, i) => s + i.thinkingTokens, 0),
-        totalCacheReadTokens: interactions.reduce((s, i) => s + i.cacheReadTokens, 0),
-        totalCacheWriteTokens: interactions.reduce((s, i) => s + i.cacheWriteTokens, 0),
+        totalCacheReadTokens,
+        totalCacheWriteTokens,
         models: [...new Set(interactions.map(i => i.model))],
         workspace: this.extractWorkspace(filePath),
         sourceFile: filePath,
+        estimatedCostUsd,
       };
     } catch {
       return null;
@@ -436,7 +460,7 @@ export class CopilotProvider extends BaseProvider {
       if (interactions.length === 0) { startTime = timestamp; }
       if (timestamp > endTime || endTime.getTime() === fallbackTimestamp.getTime()) { endTime = timestamp; }
 
-      const model = this.getModelFromRequest(request, 'unknown');
+      const model = this.getModelFromRequest(request, 'gpt-5-mini');
       const renderedInput = [
         request.result?.metadata?.renderedUserMessage,
         request.result?.metadata?.renderedGlobalContext,
@@ -471,7 +495,22 @@ export class CopilotProvider extends BaseProvider {
       });
     }
 
-    return this.buildSession(filePath, path.basename(filePath, '.jsonl'), startTime, endTime, interactions);
+    if (interactions.length === 0) { return null; }
+    const totalInputTokens = interactions.reduce((s, i) => s + i.inputTokens, 0);
+    const totalOutputTokens = interactions.reduce((s, i) => s + i.outputTokens, 0);
+    const primaryModel = interactions[interactions.length - 1]?.model || 'gpt-5-mini';
+    const estimatedCostUsd = calculateCost(primaryModel, totalInputTokens, totalOutputTokens, 0, 0);
+
+    const session = this.buildSession(filePath, path.basename(filePath, '.jsonl'), startTime, endTime, interactions);
+    session.estimatedCostUsd = estimatedCostUsd;
+    session.title = (state as any).title;
+    if (!session.title && requests[0]) {
+      const firstInput = this.extractInputText(requests[0]);
+      if (firstInput) {
+        session.title = firstInput.split('\n')[0].substring(0, 80);
+      }
+    }
+    return session;
   }
 
   private parseCopilotCliSession(filePath: string, content: string): Session | null {
@@ -546,7 +585,16 @@ export class CopilotProvider extends BaseProvider {
     }
 
     if (interactions.length === 0) { return null; }
-    return this.buildSession(filePath, sessionId, startTime || fallbackTimestamp, endTime, interactions);
+    const totalInputTokens = interactions.reduce((s, i) => s + i.inputTokens, 0);
+    const totalOutputTokens = interactions.reduce((s, i) => s + i.outputTokens, 0);
+    const totalCacheReadTokens = interactions.reduce((s, i) => s + i.cacheReadTokens, 0);
+    const totalCacheWriteTokens = interactions.reduce((s, i) => s + i.cacheWriteTokens, 0);
+    const primaryModel = interactions[interactions.length - 1]?.model || currentModel;
+    const estimatedCostUsd = calculateCost(primaryModel, totalInputTokens, totalOutputTokens, totalCacheReadTokens, totalCacheWriteTokens);
+
+    const session = this.buildSession(filePath, sessionId, startTime || fallbackTimestamp, endTime, interactions);
+    session.estimatedCostUsd = estimatedCostUsd;
+    return session;
   }
 
   private buildSession(filePath: string, id: string, startTime: Date, endTime: Date, interactions: Interaction[]): Session {
@@ -754,11 +802,16 @@ export class CopilotProvider extends BaseProvider {
     if (details.includes('claude haiku 4.5')) { return 'claude-haiku-4.5'; }
     if (details.includes('gpt-5 mini')) { return 'gpt-5-mini'; }
     if (details.includes('raptor mini')) { return 'raptor-mini'; }
-    return 'auto';
+    if (details.includes('gpt-5.3-codex')) { return 'gpt-5.3-codex'; }
+    if (details.includes('gpt-5.2-codex')) { return 'gpt-5.2-codex'; }
+    if (details.includes('gpt-4.1')) { return 'gpt-4.1'; }
+    if (details.includes('claude-sonnet-4')) { return 'claude-sonnet-4'; }
+    
+    return 'gpt-5-mini'; // Default fallback instead of 'auto' to ensure cost calculation works better
   }
 
   private normalizeModelId(model: string): string {
-    return model.replace(/^copilot\//, '').replace(/^github-copilot\//, '').trim() || 'unknown';
+    return model.replace(/^copilot\//, '').replace(/^github-copilot\//, '').trim() || 'gpt-5-mini';
   }
 
   private extractInputText(request: any): string {

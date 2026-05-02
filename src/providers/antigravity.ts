@@ -7,6 +7,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { BaseProvider } from './base';
 import { Session, Interaction } from '../types';
+import { calculateCost } from '../core/costEstimation';
 
 export class AntigravityProvider extends BaseProvider {
   readonly id = 'antigravity' as const;
@@ -43,18 +44,24 @@ export class AntigravityProvider extends BaseProvider {
       const { interactions, startTime, endTime, title } = this.parseOverview(content, filePath);
       if (interactions.length === 0) { return null; }
       const totalTokens = interactions.reduce((s, i) => s + i.totalTokens, 0);
+      const totalInputTokens = interactions.reduce((s, i) => s + i.inputTokens, 0);
+      const totalOutputTokens = interactions.reduce((s, i) => s + i.outputTokens, 0);
+      const primaryModel = interactions[interactions.length - 1]?.model || 'gemini-3.1-pro';
+      const estimatedCostUsd = calculateCost(primaryModel, totalInputTokens, totalOutputTokens, 0, 0);
+
       return {
         id: convId, provider: 'antigravity', providerName: 'Antigravity',
         startTime, endTime,
         interactions, totalTokens,
-        totalInputTokens: interactions.reduce((s, i) => s + i.inputTokens, 0),
-        totalOutputTokens: interactions.reduce((s, i) => s + i.outputTokens, 0),
+        totalInputTokens,
+        totalOutputTokens,
         totalThinkingTokens: interactions.reduce((s, i) => s + i.thinkingTokens, 0),
         totalCacheReadTokens: 0, totalCacheWriteTokens: 0,
         models: [...new Set(interactions.map(i => i.model))],
         workspace: this.extractWorkspaceFromOverview(content) || convId.substring(0, 8) + '...',
         sourceFile: filePath,
         title,
+        estimatedCostUsd,
       };
     } catch { return null; }
   }

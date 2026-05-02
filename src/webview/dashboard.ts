@@ -293,7 +293,6 @@ export class DashboardProvider {
     <div class="nav">
       <button class="btn-refresh" onclick="window.vscode.postMessage({command:'refresh'})">↺ Refresh</button>
       <div class="btn-group">
-        <button class="btn-tab" onclick="window.vscode.postMessage({command:'showCharts'})">📊 Charts</button>
         <button class="btn-tab" onclick="window.vscode.postMessage({command:'showUsageAnalysis'})">📈 Usage</button>
         <button class="btn-tab" onclick="window.vscode.postMessage({command:'showSessions'})">📋 Sessions</button>
         <button class="btn-tab" onclick="window.vscode.postMessage({command:'showPricing'})">💳 Copilot Pricing</button>
@@ -306,6 +305,12 @@ export class DashboardProvider {
   ${alertBanner}
 
   <div class="cards">
+    <div class="card" style="border-top: 2px solid var(--text-secondary);">
+      <div class="card-label">GitHub Copilot AI Credits</div>
+      <div class="card-value data-text">${fmtCredits(copilotMonth.estimatedCost)}</div>
+      <div class="card-sub">${fmtCost2(copilotMonth.estimatedCost)} GitHub Copilot spend</div>
+      <div class="card-sub" style="margin-top:6px">vs last month ${fmtDiff(copilotMonth.estimatedCost, copilotLastMonth.estimatedCost)} <span style="color:var(--text-secondary)">(${fmtCredits(copilotLastMonth.estimatedCost)} cr)</span></div>
+    </div>
     <div class="card">
       <div class="card-label">Tokens Today</div>
       <div class="card-value data-text">${fmt(m.today.totalTokens)}</div>
@@ -319,12 +324,6 @@ export class DashboardProvider {
       <div class="card-sub" style="margin-top:6px">vs last month ${fmtDiff(m.currentMonth.totalTokens, m.lastMonth.totalTokens)} <span style="color:var(--text-secondary)">(${fmt(m.lastMonth.totalTokens)})</span></div>
     </div>
     <div class="card">
-      <div class="card-label">GitHub Copilot AI Credits</div>
-      <div class="card-value data-text">${fmtCredits(copilotMonth.estimatedCost)}</div>
-      <div class="card-sub">${fmtCost2(copilotMonth.estimatedCost)} GitHub Copilot spend</div>
-      <div class="card-sub" style="margin-top:6px">vs last month ${fmtDiff(copilotMonth.estimatedCost, copilotLastMonth.estimatedCost)} <span style="color:var(--text-secondary)">(${fmtCredits(copilotLastMonth.estimatedCost)} cr)</span></div>
-    </div>
-    <div class="card">
       <div class="card-label">Last Month</div>
       <div class="card-value data-text">${fmt(m.lastMonth.totalTokens)}</div>
       <div class="card-sub">${m.lastMonth.sessions} sessions</div>
@@ -334,7 +333,6 @@ export class DashboardProvider {
       <div class="card-value data-text">${fmt(m.projectedYear.totalTokens)}</div>
       <div class="card-sub">${m.projectedYear.sessions} sessions</div>
     </div>
-    ${cacheCards}
   </div>
 
   <!-- ── Fluency Score ─────────────────────────────────────────────── -->

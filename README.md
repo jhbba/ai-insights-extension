@@ -4,6 +4,11 @@ Track token usage, costs, and AI metrics across **GitHub Copilot**, **Antigravit
 
 All data is read from local session logs - **nothing leaves your machine**.
 
+![alt text](./screenshots/screenshot-2.png "AI Insights Dashboard")
+![alt text](./screenshots/screenshot-3.png "AI Insights Dashboard")
+![alt text](./screenshots/screenshot-1.png "Token Usage")
+![alt text](./screenshots/screenshot-4.png "Sessions")
+
 ## Features
 
 ### 📊 Real-time Token Tracking
@@ -35,25 +40,13 @@ Per-model pricing for 30+ models across OpenAI, Anthropic, and Google:
 - Input/output token cost breakdown
 - Daily and projected yearly cost
 
-### 🌍 Environmental Impact
-
-Estimates for CO₂ emissions, water usage, and tree equivalents based on published research.
-
-### 📚 Wiki Export
-
-Export usage data as markdown for llm-wiki integration:
-
-- Overall usage summary
-- Per-provider detailed reports
-- Individual session logs
-
 ## Install
 
 ### From Source
 
 ```bash
-git clone https://github.com/your-username/ai-insights
-cd ai-insights
+git clone https://github.com/milan-holes/ai-insights-extension
+cd ai-insights-extension
 npm install
 npm run compile
 ```
@@ -82,7 +75,6 @@ code --install-extension ai-insights-0.1.0.vsix
 | `AI Insights: Show Token Usage Dashboard` | Open the main dashboard           |
 | `AI Insights: Show Token Usage Charts`    | Open interactive charts           |
 | `AI Insights: Generate Diagnostic Report` | Generate system diagnostic report |
-| `AI Insights: Export Usage Data to Wiki`  | Export data as markdown for wiki  |
 
 ## Settings
 
@@ -94,7 +86,6 @@ code --install-extension ai-insights-0.1.0.vsix
 | `aiInsights.providers.claudeCode.enabled`  | `true`  | Enable Claude Code tracking  |
 | `aiInsights.providers.codex.enabled`       | `true`  | Enable Codex tracking        |
 | `aiInsights.refreshIntervalMinutes`        | `5`     | Auto-refresh interval        |
-| `aiInsights.wiki.outputDirectory`          | `""`    | Custom wiki export directory |
 
 ## Status Bar
 
@@ -111,40 +102,6 @@ $(pulse) <today> | <30 days>
 - Per-provider breakdown
 
 **Click** to open the full dashboard.
-
-## Architecture
-
-```
-src/
-├── extension.ts              # Entry point
-├── types.ts                  # Shared type definitions
-├── providers/
-│   ├── base.ts               # Abstract provider interface
-│   ├── copilot.ts            # GitHub Copilot adapter
-│   ├── antigravity.ts        # Antigravity adapter
-│   ├── claudeCode.ts         # Claude Code adapter
-│   └── codex.ts              # Codex adapter
-├── core/
-│   ├── sessionAggregator.ts  # Multi-provider data merging
-│   ├── costEstimation.ts     # Model pricing & cost calc
-│   ├── cacheManager.ts       # File modification tracking
-│   └── environmentalImpact.ts # CO₂/water/tree estimates
-├── data/
-│   ├── modelPricing.json     # 30+ model pricing data
-│   └── tokenEstimators.json  # Character-to-token ratios
-├── webview/
-│   ├── dashboard.ts          # Main dashboard webview
-│   ├── charts.ts             # Chart.js visualizations
-│   └── diagnostics.ts        # Diagnostic report
-└── wiki/
-    └── exporter.ts           # Markdown wiki export
-```
-
-## Build Process
-
-1. **TypeScript** → Strict type checking via `tsc --noEmit`
-2. **esbuild** → Single-file bundle to `dist/extension.js` (~40KB minified)
-3. **vsce** → Package as `.vsix` for distribution
 
 ```bash
 # Type check
@@ -175,13 +132,6 @@ npx @vscode/vsce package
 ### Claude Code
 
 - **All platforms**: `~/.claude/projects/{project}/*.jsonl`
-
-## Known Limitations
-
-- Antigravity token counts are **estimated** from text length (no raw token API exposure)
-- Copilot sessions without explicit token counts use character-based estimation
-- Environmental impact uses industry average estimates, not per-provider data
-- Dev Container paths may not resolve if session logs are on the host
 
 ## License
 

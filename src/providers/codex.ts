@@ -7,6 +7,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { BaseProvider } from './base';
 import { Session, Interaction } from '../types';
+import { calculateCost } from '../core/costEstimation';
 
 type TokenUsage = {
   input_tokens?: number;
@@ -116,6 +117,12 @@ export class CodexProvider extends BaseProvider {
       interactions.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
       const totalTokens = interactions.reduce((s, i) => s + i.totalTokens, 0);
 
+      const totalInputTokens = interactions.reduce((s, i) => s + i.inputTokens, 0);
+      const totalOutputTokens = interactions.reduce((s, i) => s + i.outputTokens, 0);
+      const totalCacheReadTokens = interactions.reduce((s, i) => s + i.cacheReadTokens, 0);
+      const primaryModel = interactions[interactions.length - 1]?.model || 'gpt-5.3-codex';
+      const estimatedCostUsd = calculateCost(primaryModel, totalInputTokens, totalOutputTokens, totalCacheReadTokens, 0);
+
       return {
         id,
         provider: 'codex',
@@ -124,14 +131,15 @@ export class CodexProvider extends BaseProvider {
         endTime: interactions[interactions.length - 1].timestamp,
         interactions,
         totalTokens,
-        totalInputTokens: interactions.reduce((s, i) => s + i.inputTokens, 0),
-        totalOutputTokens: interactions.reduce((s, i) => s + i.outputTokens, 0),
+        totalInputTokens,
+        totalOutputTokens,
         totalThinkingTokens: interactions.reduce((s, i) => s + i.thinkingTokens, 0),
-        totalCacheReadTokens: interactions.reduce((s, i) => s + i.cacheReadTokens, 0),
+        totalCacheReadTokens,
         totalCacheWriteTokens: 0,
         models: [...new Set(interactions.map(i => i.model))],
         workspace,
         sourceFile: filePath,
+        estimatedCostUsd,
       };
     } catch { return null; }
   }
