@@ -1,0 +1,306 @@
+/**
+ * Shared type definitions for AI Insights extension.
+ * Defines a unified data model that normalizes sessions across
+ * GitHub Copilot, Antigravity, and Claude Code.
+ */
+
+/** Supported AI provider identifiers */
+export type ProviderId = 'copilot' | 'antigravity' | 'claudeCode' | 'codex';
+
+/** A single interaction (request + response) within a session */
+export interface Interaction {
+  timestamp: Date;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  thinkingTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  totalTokens: number;
+  /** The interaction mode: chat, edit, agent, etc. */
+  mode: string;
+  /** Tool calls made during this interaction */
+  toolCalls: string[];
+}
+
+/** A normalized session from any provider */
+export interface Session {
+  id: string;
+  provider: ProviderId;
+  /** Human-readable provider name */
+  providerName: string;
+  startTime: Date;
+  endTime: Date;
+  interactions: Interaction[];
+  /** Total tokens across all interactions */
+  totalTokens: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalThinkingTokens: number;
+  totalCacheReadTokens: number;
+  totalCacheWriteTokens: number;
+  /** Unique models used in this session */
+  models: string[];
+  /** Workspace/repository context if available */
+  workspace: string;
+  /** Source file path for diagnostics */
+  sourceFile: string;
+  /** Human-readable session title extracted from provider (e.g. ai-title for Claude Code) */
+  title?: string;
+  /** Estimated cost in USD for this session */
+  estimatedCostUsd?: number;
+}
+
+/** Aggregated daily usage for a provider */
+export interface DailyUsage {
+  date: string; // YYYY-MM-DD
+  provider: ProviderId;
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  thinkingTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  sessions: number;
+  interactions: number;
+  estimatedCost: number;
+  models: Record<string, number>; // model -> token count
+  toolCalls: Record<string, number>; // tool -> call count
+  repositories: Record<string, number>; // repo -> token count
+}
+
+/** Metrics for a single provider or aggregate */
+export interface ProviderMetrics {
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  thinkingTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  cacheSavingsUsd: number;
+  sessions: number;
+  interactions: number;
+  averageTokensPerSession: number;
+  averageInteractionsPerSession: number;
+  estimatedCost: number;
+  estimatedCO2Grams: number;
+  estimatedWaterLiters: number;
+  treeEquivalentYears: number;
+  /** Token breakdown by model */
+  modelBreakdown: Record<string, number>;
+  /** Token breakdown by provider */
+  providerBreakdown: Record<string, number>;
+  /** Tools called */
+  toolCalls: Record<string, number>;
+  /** Repositories used */
+  repositories: Record<string, number>;
+  /** Interaction count per normalized mode (ask/edit/agent/plan/customAgent/cli) */
+  modeBreakdown: Record<string, number>;
+  /** Cost per model */
+  costByModel: Record<string, number>;
+  /** Token and cost breakdown by model */
+  modelUsage: Record<string, ModelUsageMetrics>;
+  /** Cost per repository */
+  costByRepository: Record<string, number>;
+}
+
+/** Token and pricing breakdown for a model */
+export interface ModelUsageMetrics {
+  totalTokens: number;
+  inputTokens: number;
+  uncachedInputTokens: number;
+  outputTokens: number;
+  thinkingTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  inputCost: number;
+  cachedInputCost: number;
+  outputCost: number;
+  cacheWriteCost: number;
+  totalCost: number;
+  inputCostPerMillion: number | null;
+  cachedInputCostPerMillion: number | null;
+  outputCostPerMillion: number | null;
+  cacheCreationCostPerMillion: number | null;
+  pricingSource: 'official' | 'fallback';
+}
+
+// ─── Budget & Cost Management ─────────────────────────────────────────────────
+
+/** Alert thresholds loaded from extension config */
+export interface AlertThresholds {
+  budgetWarningPct: number;
+  budgetCriticalPct: number;
+  runawaySessionTokens: number;
+  runawaySessionCostUsd: number;
+}
+
+/** Config passed into aggregateSessions to enable budget-aware metrics */
+export interface AggregationConfig {
+  planBudget?: number;
+  teamSize?: number;
+  alertThresholds?: AlertThresholds;
+}
+
+/** Credit budget health for the current billing month */
+export interface BudgetMetrics {
+  planBudget: number;
+  mtdSpend: number;
+  creditsRemaining: number;
+  dailyBurnRate: number;
+  daysElapsed: number;
+  daysInMonth: number;
+  daysRemaining: number;
+  /** null when burn rate is 0 (never exhausted) */
+  daysUntilExhausted: number | null;
+  projectedMonthEnd: number;
+  /** 0–100: projected spend as % of plan budget */
+  overageRiskScore: number;
+  /** 0–100: MTD spend as % of plan budget */
+  budgetUtilizationPct: number;
+  teamSize: number;
+  teamProjectedCost: number;
+}
+
+/** Cache efficiency summary for the current period */
+export interface CacheMetrics {
+  /** 0–1 fraction of input tokens served from cache */
+  cacheHitRate: number;
+  /** Estimated USD saved by cache reads vs full-price input */
+  cacheSavingsUsd: number;
+  /** cache reads / cache writes - high = efficient reuse */
+  cacheWriteReadRatio: number;
+  totalCacheReadTokens: number;
+  totalCacheWriteTokens: number;
+}
+
+/** Return-on-investment metrics for the current period */
+export interface ROIMetrics {
+  outputTokensPerDollar: number;
+  /** output / input - how much code per context token */
+  inputEfficiencyRatio: number;
+  /** thinking tokens as % of total (overhead with no direct output) */
+  thinkingOverheadPct: number;
+  costPerSession: number;
+  costPerInteraction: number;
+  /** Provider with highest output tokens per dollar */
+  mostEfficientProvider: string;
+  /** Cost comparison by provider: id → $/1K output tokens */
+  providerCostPer1KOutput: Record<string, number>;
+}
+
+/** Anomaly and risk flags */
+export interface AnomalyFlags {
+  /** Z-score of today's spend vs 30-day daily average */
+  todayZScore: number;
+  /** true when Z-score exceeds 2.0 */
+  isSpike: boolean;
+  /** Sessions exceeding the configured token or cost threshold */
+  runawaySessionsCount: number;
+  /** week2 burn rate / week1 burn rate - >1.2 = accelerating */
+  burnAcceleration: number;
+  /** Consecutive days above 80% of daily-budget pace */
+  consecutiveHighDays: number;
+}
+
+/** Session depth and complexity breakdown */
+export interface SessionComplexityMetrics {
+  avgSessionDepth: number;
+  /** Sessions longer than 30 minutes */
+  longSessionsCount: number;
+  longSessionsCost: number;
+  /** Sessions with more than 5 tool calls */
+  toolHeavyCount: number;
+  thinkingSessionsCount: number;
+  multiModelSessionsCount: number;
+  avgSessionDurationMin: number;
+  highestCostSession: { id: string; cost: number; tokens: number } | null;
+}
+
+/** Full aggregated output returned by aggregateSessions() */
+export interface AggregatedMetrics {
+  today: ProviderMetrics;
+  yesterday: ProviderMetrics;
+  currentMonth: ProviderMetrics;
+  lastMonth: ProviderMetrics;
+  projectedYear: ProviderMetrics;
+  byProvider: Record<ProviderId, ProviderMetrics>;
+  todayByProvider: Record<ProviderId, ProviderMetrics>;
+  yesterdayByProvider: Record<ProviderId, ProviderMetrics>;
+  currentMonthByProvider: Record<ProviderId, ProviderMetrics>;
+  lastMonthByProvider: Record<ProviderId, ProviderMetrics>;
+  daily: DailyUsage[];
+  budget: BudgetMetrics;
+  cache: CacheMetrics;
+  roi: ROIMetrics;
+  anomaly: AnomalyFlags;
+  sessionComplexity: SessionComplexityMetrics;
+}
+
+/** Whether a config file exists and when it was last modified */
+export interface FileStatus {
+  exists: boolean;
+  /** Modified within the last 30 days */
+  fresh: boolean;
+}
+
+/** Repository-level AI configuration hygiene report */
+export interface RepositoryHygieneReport {
+  name: string;
+  /** Resolved filesystem path, or null if not discoverable */
+  repoPath: string | null;
+  sessions: number;
+  interactions: number;
+  /** 0–100 composite score; null if path unknown */
+  score: number | null;
+  files: {
+    instructions: FileStatus;   // CLAUDE.md / copilot-instructions.md / .cursorrules
+    agentSetup: FileStatus;     // .claude/settings.json
+    mcpConfig: FileStatus;      // mcpServers in settings or .mcp.json
+    skillFiles: FileStatus;     // .claude/commands/
+    customAgents: FileStatus;   // AGENTS.md or .claude/agents/
+  };
+  lastActivity: string | null;
+}
+
+/** Model pricing information */
+export interface ModelPricing {
+  inputCostPerMillion: number;
+  outputCostPerMillion: number;
+  cachedInputCostPerMillion?: number;
+  cacheCreationCostPerMillion?: number;
+  category: string;
+}
+
+/** File cache entry for tracking modifications */
+export interface CacheEntry {
+  filePath: string;
+  lastModified: number;
+  lastProcessed: number;
+  sessionData: Session | null;
+}
+
+/** Diagnostic report data */
+export interface DiagnosticReport {
+  extensionVersion: string;
+  vscodeVersion: string;
+  platform: string;
+  nodeVersion: string;
+  providers: {
+    id: ProviderId;
+    enabled: boolean;
+    sessionFilesFound: number;
+    sessionDirs: string[];
+    lastError?: string;
+  }[];
+  cacheStats: {
+    entries: number;
+    hitRate: number;
+  };
+  aggregatedStats: {
+    totalSessions: number;
+    totalTokens: number;
+    dateRange: string;
+  };
+  timestamp: string;
+}

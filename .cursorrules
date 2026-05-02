@@ -1,0 +1,71 @@
+# AI Assistant Instructions - Antigravity / Cursor / Windsurf
+
+This repository uses the **llm-wiki** approach. As an AI assistant working in this repo, you are responsible for automatically maintaining documentation in the `wiki/` directory. See `wiki/llm-wiki-setup.md` for the full specification.
+
+## Wiki rules (mandatory)
+
+1. **Auto-document changes**: after completing any task that adds a feature, changes a public API, or refactors a module - update or create the relevant file in `wiki/`.
+2. **Session logs**: for sessions with multiple file changes, create `wiki/sessions/YYYY-MM-DD-<topic>.md` (see format below).
+3. **Update `wiki/README.md`**: if you create a new wiki file not already listed there, add it to the table.
+4. **No duplicates**: update an existing wiki file rather than creating a second one for the same component.
+5. **Auto-update `CHANGELOG.md`**: for every shipped behavior change (feature, fix, refactor with user impact, provider parsing change, or new setting), add an entry under the current or next version in `CHANGELOG.md` within the same task.
+
+## Wiki folder structure
+
+```
+wiki/
+├── README.md
+├── architecture.md
+├── llm-wiki-setup.md
+├── providers/
+│   ├── base.md
+│   ├── claudeCode.md
+│   ├── antigravity.md
+│   ├── copilot.md
+│   └── codex.md
+├── core/
+│   ├── sessionAggregator.md
+│   ├── costEstimation.md
+│   ├── environmentalImpact.md
+│   └── cacheManager.md
+└── sessions/
+    └── YYYY-MM-DD-<topic>.md
+```
+
+## Session log format
+
+```markdown
+# Session: <topic> - YYYY-MM-DD
+
+## What was done
+
+- bullet list
+
+## Files changed
+
+- `src/foo.ts` - description
+
+## Decisions made
+
+- non-obvious choices and why
+
+## Follow-up / known gaps
+
+- anything left open
+```
+
+## Style
+
+- Tables and code blocks over prose.
+- Link source files from wiki root: `[src/foo.ts](../../src/foo.ts)`.
+- One component per wiki file. Keep files concise.
+- Do not duplicate information already in source code - link instead.
+
+## Repository context
+
+- **Extension**: `ai-insights` - VS Code token tracker (Copilot, Antigravity, Claude Code, Codex)
+- **Entry point**: `src/extension.ts`
+- **Build**: `npm run compile`
+- **Providers**: `src/providers/{base,claudeCode,antigravity,copilot,codex}.ts`
+- **Core modules**: `src/core/{sessionAggregator,costEstimation,environmentalImpact,cacheManager}.ts`
+- **Types**: `src/types.ts`

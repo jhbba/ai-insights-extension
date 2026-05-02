@@ -1,0 +1,263 @@
+{
+  "metadata": {
+    "lastUpdated": "2026-05-02",
+    "sources": [
+      { "name": "GitHub Copilot Models & Pricing", "url": "https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing" }
+    ]
+  },
+  "pricing": {
+    "gpt-4.1": {
+      "displayName": "GPT-4.1",
+      "provider": "openai",
+      "copilotOfficial": true,
+      "inputCostPerMillion": 2.00,
+      "outputCostPerMillion": 8.00,
+      "cachedInputCostPerMillion": 0.50,
+      "category": "Versatile"
+    },
+    "gpt-4o": {
+      "displayName": "GPT-4o",
+      "provider": "openai",
+      "copilotOfficial": false,
+      "inputCostPerMillion": 2.50,
+      "outputCostPerMillion": 10.00,
+      "cachedInputCostPerMillion": 1.25,
+      "category": "Legacy"
+    },
+    "gpt-4o-mini": {
+      "displayName": "GPT-4o mini",
+      "provider": "openai",
+      "copilotOfficial": false,
+      "inputCostPerMillion": 0.15,
+      "outputCostPerMillion": 0.60,
+      "cachedInputCostPerMillion": 0.075,
+      "category": "Legacy"
+    },
+    "gpt-5-mini": {
+      "displayName": "GPT-5 mini",
+      "provider": "openai",
+      "copilotOfficial": true,
+      "inputCostPerMillion": 0.25,
+      "outputCostPerMillion": 2.00,
+      "cachedInputCostPerMillion": 0.025,
+      "category": "Lightweight"
+    },
+    "gpt-5.2": {
+      "displayName": "GPT-5.2",
+      "provider": "openai",
+      "copilotOfficial": true,
+      "inputCostPerMillion": 1.75,
+      "outputCostPerMillion": 14.00,
+      "cachedInputCostPerMillion": 0.175,
+      "category": "Versatile"
+    },
+    "gpt-5.2-codex": {
+      "displayName": "GPT-5.2 Codex",
+      "provider": "openai",
+      "copilotOfficial": true,
+      "inputCostPerMillion": 1.75,
+      "outputCostPerMillion": 14.00,
+      "cachedInputCostPerMillion": 0.175,
+      "category": "Powerful"
+    },
+    "gpt-5.3-codex": {
+      "displayName": "GPT-5.3 Codex",
+      "provider": "openai",
+      "copilotOfficial": true,
+      "inputCostPerMillion": 1.75,
+      "outputCostPerMillion": 14.00,
+      "cachedInputCostPerMillion": 0.175,
+      "category": "Powerful"
+    },
+    "gpt-5.4": {
+      "displayName": "GPT-5.4",
+      "provider": "openai",
+      "copilotOfficial": true,
+      "inputCostPerMillion": 2.50,
+      "outputCostPerMillion": 15.00,
+      "cachedInputCostPerMillion": 0.25,
+      "category": "Versatile"
+    },
+    "gpt-5.4-mini": {
+      "displayName": "GPT-5.4 mini",
+      "provider": "openai",
+      "copilotOfficial": true,
+      "inputCostPerMillion": 0.75,
+      "outputCostPerMillion": 4.50,
+      "cachedInputCostPerMillion": 0.075,
+      "category": "Lightweight"
+    },
+    "gpt-5.4-nano": {
+      "displayName": "GPT-5.4 nano",
+      "provider": "openai",
+      "copilotOfficial": true,
+      "inputCostPerMillion": 0.20,
+      "outputCostPerMillion": 1.25,
+      "cachedInputCostPerMillion": 0.02,
+      "category": "Lightweight"
+    },
+    "gpt-5.5": {
+      "displayName": "GPT-5.5",
+      "provider": "openai",
+      "copilotOfficial": true,
+      "inputCostPerMillion": 5.00,
+      "outputCostPerMillion": 30.00,
+      "cachedInputCostPerMillion": 0.50,
+      "category": "Powerful"
+    },
+    "claude-haiku-4.5": {
+      "displayName": "Claude Haiku 4.5",
+      "provider": "anthropic",
+      "copilotOfficial": true,
+      "inputCostPerMillion": 1.00,
+      "outputCostPerMillion": 5.00,
+      "cachedInputCostPerMillion": 0.10,
+      "cacheCreationCostPerMillion": 1.25,
+      "category": "Versatile"
+    },
+    "claude-3.5-haiku": {
+      "displayName": "Claude 3.5 Haiku",
+      "provider": "anthropic",
+      "copilotOfficial": false,
+      "inputCostPerMillion": 0.80,
+      "outputCostPerMillion": 4.00,
+      "cachedInputCostPerMillion": 0.08,
+      "cacheCreationCostPerMillion": 1.00,
+      "category": "Legacy"
+    },
+    "claude-haiku-3.5": {
+      "displayName": "Claude Haiku 3.5",
+      "provider": "anthropic",
+      "copilotOfficial": false,
+      "inputCostPerMillion": 0.80,
+      "outputCostPerMillion": 4.00,
+      "cachedInputCostPerMillion": 0.08,
+      "cacheCreationCostPerMillion": 1.00,
+      "category": "Legacy"
+    },
+    "claude-sonnet-4": {
+      "displayName": "Claude Sonnet 4",
+      "provider": "anthropic",
+      "copilotOfficial": false,
+      "inputCostPerMillion": 3.00,
+      "outputCostPerMillion": 15.00,
+      "cachedInputCostPerMillion": 0.30,
+      "cacheCreationCostPerMillion": 3.75,
+      "category": "Versatile"
+    },
+    "claude-3.5-sonnet": {
+      "displayName": "Claude 3.5 Sonnet",
+      "provider": "anthropic",
+      "copilotOfficial": false,
+      "inputCostPerMillion": 3.00,
+      "outputCostPerMillion": 15.00,
+      "cachedInputCostPerMillion": 0.30,
+      "cacheCreationCostPerMillion": 3.75,
+      "category": "Legacy"
+    },
+    "claude-sonnet-4.5": {
+      "displayName": "Claude Sonnet 4.5",
+      "provider": "anthropic",
+      "copilotOfficial": false,
+      "inputCostPerMillion": 3.00,
+      "outputCostPerMillion": 15.00,
+      "cachedInputCostPerMillion": 0.30,
+      "cacheCreationCostPerMillion": 3.75,
+      "category": "Versatile"
+    },
+    "claude-sonnet-4.6": {
+      "displayName": "Claude Sonnet 4.6",
+      "provider": "anthropic",
+      "copilotOfficial": false,
+      "inputCostPerMillion": 3.00,
+      "outputCostPerMillion": 15.00,
+      "cachedInputCostPerMillion": 0.30,
+      "cacheCreationCostPerMillion": 3.75,
+      "category": "Versatile"
+    },
+    "claude-opus-4.5": {
+      "displayName": "Claude Opus 4.5",
+      "provider": "anthropic",
+      "copilotOfficial": true,
+      "inputCostPerMillion": 5.00,
+      "outputCostPerMillion": 25.00,
+      "cachedInputCostPerMillion": 0.50,
+      "cacheCreationCostPerMillion": 6.25,
+      "category": "Powerful"
+    },
+    "claude-opus-4.6": {
+      "displayName": "Claude Opus 4.6",
+      "provider": "anthropic",
+      "copilotOfficial": true,
+      "inputCostPerMillion": 5.00,
+      "outputCostPerMillion": 25.00,
+      "cachedInputCostPerMillion": 0.50,
+      "cacheCreationCostPerMillion": 6.25,
+      "category": "Powerful"
+    },
+    "claude-opus-4.7": {
+      "displayName": "Claude Opus 4.7",
+      "provider": "anthropic",
+      "copilotOfficial": true,
+      "inputCostPerMillion": 5.00,
+      "outputCostPerMillion": 25.00,
+      "cachedInputCostPerMillion": 0.50,
+      "cacheCreationCostPerMillion": 6.25,
+      "category": "Powerful"
+    },
+    "gemini-2.5-pro": {
+      "displayName": "Gemini 2.5 Pro",
+      "provider": "google",
+      "copilotOfficial": true,
+      "inputCostPerMillion": 1.25,
+      "outputCostPerMillion": 10.00,
+      "cachedInputCostPerMillion": 0.125,
+      "category": "Versatile"
+    },
+    "gemini-3-flash": {
+      "displayName": "Gemini 3 Flash",
+      "provider": "google",
+      "copilotOfficial": false,
+      "inputCostPerMillion": 0.50,
+      "outputCostPerMillion": 3.00,
+      "cachedInputCostPerMillion": 0.05,
+      "category": "Lightweight"
+    },
+    "gemini-3.1-pro": {
+      "displayName": "Gemini 3.1 Pro",
+      "provider": "google",
+      "copilotOfficial": false,
+      "inputCostPerMillion": 2.00,
+      "outputCostPerMillion": 12.00,
+      "cachedInputCostPerMillion": 0.20,
+      "category": "Powerful"
+    },
+    "grok-code-fast-1": {
+      "displayName": "Grok Code Fast 1",
+      "provider": "xai",
+      "copilotOfficial": true,
+      "inputCostPerMillion": 0.20,
+      "outputCostPerMillion": 1.50,
+      "cachedInputCostPerMillion": 0.02,
+      "category": "Lightweight"
+    },
+    "raptor-mini": {
+      "displayName": "Raptor mini",
+      "provider": "openai",
+      "copilotOfficial": false,
+      "inputCostPerMillion": 0.25,
+      "outputCostPerMillion": 2.00,
+      "cachedInputCostPerMillion": 0.025,
+      "category": "Versatile"
+    },
+    "goldeneye": {
+      "displayName": "Goldeneye",
+      "provider": "google",
+      "copilotOfficial": false,
+      "inputCostPerMillion": 1.25,
+      "outputCostPerMillion": 10.00,
+      "cachedInputCostPerMillion": 0.125,
+      "category": "Powerful"
+    }
+  }
+}

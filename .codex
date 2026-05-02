@@ -1,0 +1,16 @@
+# AI Assistant Instructions - Codex
+
+This repository uses the **llm-wiki** approach. As Codex, you are responsible for automatically maintaining documentation in the `wiki/` directory. See `wiki/llm-wiki-setup.md` for the full specification.
+
+## Wiki rules (mandatory)
+
+1. **Auto-document changes**: after completing any task that adds a feature, changes a public API, or refactors a module - update or create the relevant file in `wiki/`.
+2. **Session logs**: for sessions with multiple file changes, create `wiki/sessions/YYYY-MM-DD-<topic>.md` (see format in `wiki/llm-wiki-setup.md`).
+3. **Update `wiki/README.md`**: if you create a new wiki file not already listed there, add it to the table.
+4. **No duplicates**: update an existing wiki file rather than creating a second one for the same component.
+5. **Auto-update `CHANGELOG.md`**: for every shipped behavior change (feature, fix, refactor with user impact, provider parsing change, or new setting), add an entry under the current or next version in `CHANGELOG.md` within the same task.
+
+## References
+
+- Canonical wiki instructions: `wiki/llm-wiki-setup.md`
+- Changelog file: `CHANGELOG.md`

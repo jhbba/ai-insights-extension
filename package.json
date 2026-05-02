@@ -1,0 +1,186 @@
+{
+  "name": "ai-insights",
+  "displayName": "AI Insights - Token Tracker",
+  "description": "Track token usage, costs, and AI metrics across GitHub Copilot, Antigravity, Claude Code, and Codex.",
+  "version": "0.1.1",
+  "publisher": "thewalking-dev",
+  "license": "MIT",
+  "icon": "assets/logo.png",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/milan-holes/ai-insights-extension"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "copilot",
+    "antigravity",
+    "claude",
+    "token",
+    "usage",
+    "cost",
+    "tracker",
+    "ai",
+    "llm"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "aiInsights.refresh",
+        "title": "Refresh Token Usage",
+        "category": "AI Insights"
+      },
+      {
+        "command": "aiInsights.showDashboard",
+        "title": "Show Token Usage Dashboard",
+        "category": "AI Insights",
+        "icon": "$(pulse)"
+      },
+      {
+        "command": "aiInsights.showCharts",
+        "title": "Show Token Usage Charts",
+        "category": "AI Insights",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "aiInsights.showDiagnostics",
+        "title": "Generate Diagnostic Report",
+        "category": "AI Insights"
+      },
+      {
+        "command": "aiInsights.showUsageAnalysis",
+        "title": "Show Usage Analysis",
+        "category": "AI Insights",
+        "icon": "$(graph-line)"
+      },
+      {
+        "command": "aiInsights.showSessions",
+        "title": "Show Sessions List",
+        "category": "AI Insights",
+        "icon": "$(list-unordered)"
+      },
+      {
+        "command": "aiInsights.showPricing",
+        "title": "Show Copilot Model Pricing",
+        "category": "AI Insights",
+        "icon": "$(tag)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "aiInsights.showDashboard",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "AI Insights",
+      "properties": {
+        "aiInsights.display.compactNumbers": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show token counts in compact format using K/M suffixes (e.g. 1.5K, 1.2M)."
+        },
+        "aiInsights.providers.copilot.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable GitHub Copilot session log tracking."
+        },
+        "aiInsights.providers.antigravity.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable Antigravity (Gemini) session log tracking."
+        },
+        "aiInsights.providers.claudeCode.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable Claude Code session log tracking."
+        },
+        "aiInsights.providers.codex.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable Codex session log tracking."
+        },
+        "aiInsights.refreshIntervalMinutes": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "maximum": 60,
+          "description": "Auto-refresh interval in minutes."
+        },
+        "aiInsights.sessionLookbackDays": {
+          "type": "number",
+          "default": 30,
+          "minimum": 1,
+          "maximum": 365,
+          "description": "Only load session files modified within this many days."
+        },
+        "aiInsights.copilotPlanBudget": {
+          "type": "number",
+          "default": 10,
+          "description": "Monthly Copilot credit budget in USD. Pro=$10, Business=$19, Pro+/Enterprise=$39. Used for budget health widget and forecasting."
+        },
+        "aiInsights.teamSize": {
+          "type": "number",
+          "default": 1,
+          "minimum": 1,
+          "description": "Team size for cost multiplication in forecasts and the status bar tooltip."
+        },
+        "aiInsights.alertThresholds.budgetWarningPct": {
+          "type": "number",
+          "default": 80,
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Budget utilization % at which an amber warning is shown in the dashboard and status bar."
+        },
+        "aiInsights.alertThresholds.budgetCriticalPct": {
+          "type": "number",
+          "default": 95,
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Budget utilization % at which a red critical alert is shown."
+        },
+        "aiInsights.alertThresholds.runawaySessionTokens": {
+          "type": "number",
+          "default": 100000,
+          "description": "Token count per session above which the session is flagged as a runaway session."
+        },
+        "aiInsights.alertThresholds.runawaySessionCostUsd": {
+          "type": "number",
+          "default": 1,
+          "description": "USD cost per session above which the session is flagged as a runaway session."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "tsc --noEmit && node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "package": "tsc --noEmit && node esbuild.js --production",
+    "lint": "eslint src --ext ts",
+    "test": "node --experimental-vm-modules node_modules/.bin/jest"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.20.0",
+    "eslint": "^8.56.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "chart.js": "^4.4.1"
+  }
+}

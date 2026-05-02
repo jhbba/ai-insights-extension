@@ -1,0 +1,19 @@
+{
+  "estimators": {
+    "default": 0.25,
+    "gpt-4o": 0.25,
+    "gpt-4o-mini": 0.25,
+    "gpt-4.1": 0.25,
+    "gpt-5": 0.25,
+    "gpt-5-mini": 0.25,
+    "claude-3.5-sonnet": 0.24,
+    "claude-sonnet-4": 0.24,
+    "claude-opus-4": 0.24,
+    "claude-opus-4.6": 0.24,
+    "claude-3.5-haiku": 0.24,
+    "gemini-2.5-pro": 0.24,
+    "gemini-3-flash": 0.24,
+    "gemini-3-pro": 0.24,
+    "gemini-3.1-pro": 0.24
+  }
+}
