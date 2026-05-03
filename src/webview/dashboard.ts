@@ -4,6 +4,7 @@
 import * as vscode from 'vscode';
 import { AggregatedMetrics } from '../types';
 import { ConnectedGitHubUser } from '../core/githubAuth';
+import { providerIcon } from './providerIcons';
 
 export class DashboardProvider {
   static readonly viewType = 'aiInsights.dashboard';
@@ -133,9 +134,10 @@ export class DashboardProvider {
 
     // ── Provider rows ────────────────────────────────────────────────────────
     const providerRows = Object.entries(m.byProvider).map(([id, p]) => {
-      const name = id === 'copilot' ? '🤖 GitHub Copilot' :
-        id === 'antigravity' ? '🚀 Antigravity' :
-          id === 'claudeCode' ? '🟣 Claude Code' : '⌘ Codex';
+      const label = id === 'copilot' ? 'GitHub Copilot' :
+        id === 'antigravity' ? 'Antigravity' :
+          id === 'claudeCode' ? 'Claude Code' : 'Codex';
+      const name = `${providerIcon(id)} ${label}`;
       const cHit = (p.inputTokens + p.cacheReadTokens) > 0
         ? Math.round((p.cacheReadTokens / (p.inputTokens + p.cacheReadTokens)) * 100) + '%'
         : '-';

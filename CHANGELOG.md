@@ -6,6 +6,8 @@ All notable changes to the AI Insights extension will be documented in this file
 
 ### Added
 
+- **Official provider logos** — replaced emoji placeholders with inline SVG brand logos across all views (dashboard provider table, sessions badge, usage analysis ROI table): GitHub mark for Copilot, Google Gemini 4-star for Antigravity, Anthropic A-mark for Claude Code, OpenAI logo for Codex. New shared `src/webview/providerIcons.ts` module.
+
 - **Suggestion Acceptance Rate (Quality Proxy)** — new `🎯 Quality` tab in Usage Analysis. Tracks how often AI ghost-text suggestions are accepted vs. triggered using `vscode.languages.onDidAcceptCompletionItem` (popup acceptances) and a zero-interference `InlineCompletionItemProvider` (debounced trigger count as proxy for suggestions shown). Acceptance rate is colour-coded: green ≥30%, amber 10–29%, red <10%. Resets each VS Code session. New `AcceptanceMetrics` type in `types.ts`; new `src/core/acceptanceTracker.ts` module.
 
 - **Connect GitHub to auto-set budget** — new opt-in command `AI Insights: Connect GitHub to Auto-Set Budget` authenticates via VS Code's built-in GitHub OAuth (`read:user` scope), fetches the user's GitHub plan from the API, and automatically updates `aiInsights.copilotPlanBudget` (Free→$0, Pro→$10, Business→$19, Enterprise→$39). Falls back to a quick-pick selector if the plan field is not returned. Connected status (`@login · plan · $X/month`) is shown in the dashboard above the credits card with a Reconnect button. State persists across sessions via `globalState`.

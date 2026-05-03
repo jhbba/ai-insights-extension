@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { AggregatedMetrics, RepositoryHygieneReport, FileStatus, AcceptanceMetrics } from '../types';
+import { providerIcon } from './providerIcons';
 
 const KNOWN_AUTO_TOOLS = new Set(['Read', 'Bash', 'Grep', 'LS', 'Glob', 'Cat']);
 
@@ -42,6 +43,10 @@ function fmt(n: number): string {
 }
 
 function fmtCost(n: number): string { return '$' + n.toFixed(4); }
+
+function tip(text: string): string {
+  return `<span title="${text}" style="cursor:help;color:var(--text-secondary);font-size:0.85em;margin-left:3px;vertical-align:middle;">ⓘ</span>`;
+}
 
 function buildModeTable(modeBreakdown: Record<string, number>): string {
   const total = Object.values(modeBreakdown).reduce((s, n) => s + n, 0);
@@ -276,9 +281,10 @@ function buildCostIntelligenceTab(m: AggregatedMetrics, roiConfig: RoiConfig): s
   const providerRoiRows = Object.entries(roi.providerCostPer1KOutput)
     .sort(([, a], [, b]) => a - b)
     .map(([id, costPer1K]) => {
-      const name = id === 'copilot' ? '🤖 Copilot' :
-        id === 'antigravity' ? '🚀 Antigravity' :
-          id === 'claudeCode' ? '🟣 Claude Code' : '⌘ Codex';
+      const label = id === 'copilot' ? 'Copilot' :
+        id === 'antigravity' ? 'Antigravity' :
+          id === 'claudeCode' ? 'Claude Code' : 'Codex';
+      const name = `${providerIcon(id)} ${label}`;
       const p = m.byProvider[id as keyof typeof m.byProvider];
       const isBest = id === roi.mostEfficientProvider;
       return `<tr ${isBest ? 'style="background:rgba(57,255,20,0.04);"' : ''}>
@@ -320,12 +326,12 @@ function buildCostIntelligenceTab(m: AggregatedMetrics, roiConfig: RoiConfig): s
 	    <p class="subtitle">Copilot plan: ${planLabel} · ${b.daysElapsed} of ${b.daysInMonth} days elapsed</p>
 
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:20px;">
-	      <div class="mini-card"><div class="mini-label">Copilot MTD Spend</div><div class="mini-val data-text">${fmtCost(b.mtdSpend)}</div></div>
-	      <div class="mini-card"><div class="mini-label">Copilot Budget Left</div><div class="mini-val data-text" style="color:${budgetBarColor}">${fmtCost(b.creditsRemaining)}</div></div>
-      <div class="mini-card"><div class="mini-label">Daily Burn Rate</div><div class="mini-val data-text">${fmtCost(b.dailyBurnRate)}/day</div></div>
-      <div class="mini-card"><div class="mini-label">Days Until Exhausted</div><div class="mini-val data-text">${exhaustedText}</div></div>
-      <div class="mini-card"><div class="mini-label">Projected Month-End</div><div class="mini-val data-text" style="color:${projOverage ? '#FF4D4D' : '#39FF14'}">${fmtCost(b.projectedMonthEnd)}</div></div>
-      <div class="mini-card"><div class="mini-label">Overage Risk</div><div class="mini-val data-text" style="color:${budgetBarColor}">${Math.min(200, Math.round(b.overageRiskScore))}%</div></div>
+	      <div class="mini-card"><div class="mini-label">Copilot MTD Spend ${tip('Month-to-date estimated cost based on token usage and provider model pricing.')}</div><div class="mini-val data-text">${fmtCost(b.mtdSpend)}</div></div>
+	      <div class="mini-card"><div class="mini-label">Copilot Budget Left ${tip('Remaining budget = plan budget minus MTD spend. Turns red below 20%.')}</div><div class="mini-val data-text" style="color:${budgetBarColor}">${fmtCost(b.creditsRemaining)}</div></div>
+      <div class="mini-card"><div class="mini-label">Daily Burn Rate ${tip('Average daily cost = MTD spend ÷ days elapsed this month.')}</div><div class="mini-val data-text">${fmtCost(b.dailyBurnRate)}/day</div></div>
+      <div class="mini-card"><div class="mini-label">Days Until Exhausted ${tip('Estimated days before the plan budget runs out at the current daily burn rate.')}</div><div class="mini-val data-text">${exhaustedText}</div></div>
+      <div class="mini-card"><div class="mini-label">Projected Month-End ${tip('Estimated total cost by end of month = daily burn rate × days in month. Red if it exceeds the plan budget.')}</div><div class="mini-val data-text" style="color:${projOverage ? '#FF4D4D' : '#39FF14'}">${fmtCost(b.projectedMonthEnd)}</div></div>
+      <div class="mini-card"><div class="mini-label">Overage Risk ${tip('Projected month-end spend as a % of your plan budget. Above 100% means an overspend is expected.')}</div><div class="mini-val data-text" style="color:${budgetBarColor}">${Math.min(200, Math.round(b.overageRiskScore))}%</div></div>
     </div>
 
     ${projOverage ? `<div style="background:rgba(255,77,77,0.08);border:1px solid rgba(255,77,77,0.25);border-radius:6px;padding:10px 14px;font-size:0.85em;color:#ff8a8a;margin-bottom:16px;">
@@ -361,25 +367,25 @@ function buildCostIntelligenceTab(m: AggregatedMetrics, roiConfig: RoiConfig): s
     <p class="subtitle">Copilot cached input is priced separately from fresh input in GitHub's model pricing table</p>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:16px;">
       <div class="mini-card">
-        <div class="mini-label">Cache Hit Rate</div>
+        <div class="mini-label">Cache Hit Rate ${tip('Proportion of input tokens served from cache vs. total input. Higher = cheaper and faster responses.')}</div>
         <div class="mini-val data-text" style="color:${cache.cacheHitRate >= 0.3 ? '#39FF14' : cache.cacheHitRate >= 0.1 ? '#f9e2af' : 'var(--text-secondary)'}">
           ${Math.round(cache.cacheHitRate * 100)}%
         </div>
       </div>
       <div class="mini-card">
-        <div class="mini-label">Cache Savings (MTD)</div>
+        <div class="mini-label">Cache Savings (MTD) ${tip('Estimated dollar savings from cache hits this month — cached tokens are billed at a lower rate.')}</div>
         <div class="mini-val data-text" style="color:#39FF14">${fmtCost(cache.cacheSavingsUsd)}</div>
       </div>
       <div class="mini-card">
-        <div class="mini-label">Cache Read Tokens</div>
+        <div class="mini-label">Cache Read Tokens ${tip('Tokens served from the prompt cache (billed at a reduced read rate).')}</div>
         <div class="mini-val data-text">${fmt(cache.totalCacheReadTokens)}</div>
       </div>
       <div class="mini-card">
-        <div class="mini-label">Cache Write Tokens</div>
+        <div class="mini-label">Cache Write Tokens ${tip('Tokens written into the prompt cache (billed at a write rate, then read cheaply later).')}</div>
         <div class="mini-val data-text">${fmt(cache.totalCacheWriteTokens)}</div>
       </div>
       <div class="mini-card">
-        <div class="mini-label">Read/Write Ratio</div>
+        <div class="mini-label">Read/Write Ratio ${tip('How many times each cached token is reused on average. Higher = better cache ROI.')}</div>
         <div class="mini-val data-text">${cache.cacheWriteReadRatio.toFixed(1)}×</div>
       </div>
     </div>
@@ -401,19 +407,19 @@ function buildCostIntelligenceTab(m: AggregatedMetrics, roiConfig: RoiConfig): s
       return `
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:20px;">
       <div class="mini-card">
-        <div class="mini-label">Hours Saved</div>
+        <div class="mini-label">Hours Saved ${tip('Estimated developer hours saved = output tokens ÷ tokensPerHourSaved setting. Adjust the setting to match your workflow.')}</div>
         <div class="mini-val data-text" style="color:var(--stage-4);">~${fmtH(hoursSaved)}</div>
       </div>
       <div class="mini-card">
-        <div class="mini-label">Value Generated</div>
+        <div class="mini-label">Value Generated ${tip('Estimated dollar value of time saved = hours saved × configured hourly rate (aiInsights.roi.developerHourlyRate).')}</div>
         <div class="mini-val data-text" style="color:var(--stage-4);">~$${valueGenerated.toFixed(0)}</div>
       </div>
       <div class="mini-card">
-        <div class="mini-label">AI Spend</div>
+        <div class="mini-label">AI Spend ${tip('Actual estimated cost of all AI usage this month across all providers.')}</div>
         <div class="mini-val data-text">${fmtCost(aiCost)}</div>
       </div>
       <div class="mini-card">
-        <div class="mini-label">ROI Multiplier</div>
+        <div class="mini-label">ROI Multiplier ${tip('Value generated ÷ AI spend. Shows how many dollars of developer value you get per dollar of AI cost.')}</div>
         <div class="mini-val data-text" style="color:${roiColor};">${roiMult > 0 ? `~${roiMult.toFixed(0)}×` : '—'}</div>
       </div>
     </div>
@@ -436,11 +442,11 @@ function buildCostIntelligenceTab(m: AggregatedMetrics, roiConfig: RoiConfig): s
         <h3 style="margin-bottom:12px;">Cost Efficiency</h3>
         <table>
           <tbody>
-            <tr><td>Output tokens per $1</td><td class="data-text" style="text-align:right;">${roi.outputTokensPerDollar > 0 ? Math.round(roi.outputTokensPerDollar).toLocaleString() : '-'}</td></tr>
-            <tr><td>Cost per session</td><td class="data-text" style="text-align:right;">${fmtCost(roi.costPerSession)}</td></tr>
-            <tr><td>Cost per interaction</td><td class="data-text" style="text-align:right;">${fmtCost(roi.costPerInteraction)}</td></tr>
-            <tr><td>Input efficiency (out/in)</td><td class="data-text" style="text-align:right;">${roi.inputEfficiencyRatio.toFixed(2)}×</td></tr>
-            <tr><td>Thinking overhead</td><td class="data-text" style="text-align:right;">${roi.thinkingOverheadPct.toFixed(1)}%</td></tr>
+            <tr><td>Output tokens per $1 ${tip('How many output tokens you get for each dollar spent. Higher = more cost-efficient model usage.')}</td><td class="data-text" style="text-align:right;">${roi.outputTokensPerDollar > 0 ? Math.round(roi.outputTokensPerDollar).toLocaleString() : '-'}</td></tr>
+            <tr><td>Cost per session ${tip('Average estimated cost per AI session this month.')}</td><td class="data-text" style="text-align:right;">${fmtCost(roi.costPerSession)}</td></tr>
+            <tr><td>Cost per interaction ${tip('Average estimated cost per individual AI interaction (one prompt + response pair).')}</td><td class="data-text" style="text-align:right;">${fmtCost(roi.costPerInteraction)}</td></tr>
+            <tr><td>Input efficiency (out/in) ${tip('Ratio of output tokens to input tokens. Higher means the model generates more content per token you send.')}</td><td class="data-text" style="text-align:right;">${roi.inputEfficiencyRatio.toFixed(2)}×</td></tr>
+            <tr><td>Thinking overhead ${tip('Percentage of total tokens spent on model reasoning/thinking. High values indicate heavy use of extended thinking mode.')}</td><td class="data-text" style="text-align:right;">${roi.thinkingOverheadPct.toFixed(1)}%</td></tr>
           </tbody>
         </table>
       </div>
@@ -464,19 +470,19 @@ function buildCostIntelligenceTab(m: AggregatedMetrics, roiConfig: RoiConfig): s
     ${anomalyBadges}
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-top:16px;">
       <div class="mini-card">
-        <div class="mini-label">Today's Z-Score</div>
+        <div class="mini-label">Today's Z-Score ${tip('Statistical measure of how unusual today\'s spend is vs. your 30-day average. >2σ = notable spike, >3σ = strong anomaly.')}</div>
         <div class="mini-val data-text" style="color:${Math.abs(anomaly.todayZScore) > 2 ? '#FF4D4D' : 'var(--text-primary)'}">${anomaly.todayZScore.toFixed(2)}σ</div>
       </div>
       <div class="mini-card">
-        <div class="mini-label">Runaway Sessions</div>
+        <div class="mini-label">Runaway Sessions ${tip('Sessions that exceeded a high token or cost threshold — indicating potentially uncontrolled AI usage.')}</div>
         <div class="mini-val data-text" style="color:${anomaly.runawaySessionsCount > 0 ? '#FF4D4D' : 'var(--stage-4)'}">${anomaly.runawaySessionsCount}</div>
       </div>
       <div class="mini-card">
-        <div class="mini-label">Burn Acceleration</div>
+        <div class="mini-label">Burn Acceleration ${tip('Ratio of last 7 days spend vs. the prior 7 days. >1.2× = accelerating spend trend.')}</div>
         <div class="mini-val data-text" style="color:${anomaly.burnAcceleration > 1.2 ? '#f9e2af' : 'var(--text-primary)'}">${anomaly.burnAcceleration.toFixed(2)}×</div>
       </div>
       <div class="mini-card">
-        <div class="mini-label">Consecutive High Days</div>
+        <div class="mini-label">Consecutive High Days ${tip('Number of consecutive days with above-average spending.')}</div>
         <div class="mini-val data-text" style="color:${anomaly.consecutiveHighDays >= 3 ? '#f9e2af' : 'var(--text-primary)'}">${anomaly.consecutiveHighDays}</div>
       </div>
     </div>
@@ -488,29 +494,29 @@ function buildCostIntelligenceTab(m: AggregatedMetrics, roiConfig: RoiConfig): s
     <p class="subtitle">Breakdown of session depth and cost drivers</p>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:20px;">
       <div class="mini-card">
-        <div class="mini-label">Avg Session Depth</div>
+        <div class="mini-label">Avg Session Depth ${tip('Average number of back-and-forth interactions per session.')}</div>
         <div class="mini-val data-text">${sc.avgSessionDepth.toFixed(1)} interactions</div>
       </div>
       <div class="mini-card">
-        <div class="mini-label">Avg Session Duration</div>
+        <div class="mini-label">Avg Session Duration ${tip('Average elapsed time per session in minutes.')}</div>
         <div class="mini-val data-text">${sc.avgSessionDurationMin.toFixed(1)} min</div>
       </div>
       <div class="mini-card">
-        <div class="mini-label">Long Sessions (&gt;30 min)</div>
+        <div class="mini-label">Long Sessions (&gt;30 min) ${tip('Count of sessions lasting more than 30 minutes — these tend to be more expensive.')}</div>
         <div class="mini-val data-text">${sc.longSessionsCount}</div>
         <div style="font-size:0.75em;color:var(--text-secondary);">cost ${fmtCost(sc.longSessionsCost)}</div>
       </div>
       <div class="mini-card">
-        <div class="mini-label">Tool-Heavy Sessions</div>
+        <div class="mini-label">Tool-Heavy Sessions ${tip('Sessions that invoked more than 5 unique tools — typically agent or autonomous tasks.')}</div>
         <div class="mini-val data-text">${sc.toolHeavyCount}</div>
         <div style="font-size:0.75em;color:var(--text-secondary);">&gt;5 unique tools</div>
       </div>
       <div class="mini-card">
-        <div class="mini-label">Thinking Sessions</div>
+        <div class="mini-label">Thinking Sessions ${tip('Sessions where the model used extended reasoning/thinking tokens.')}</div>
         <div class="mini-val data-text">${sc.thinkingSessionsCount}</div>
       </div>
       <div class="mini-card">
-        <div class="mini-label">Multi-Model Sessions</div>
+        <div class="mini-label">Multi-Model Sessions ${tip('Sessions that used more than one AI model during the same conversation.')}</div>
         <div class="mini-val data-text">${sc.multiModelSessionsCount}</div>
       </div>
     </div>
@@ -553,17 +559,17 @@ function buildAcceptanceSection(a: AcceptanceMetrics): string {
 
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:20px;">
       <div class="mini-card">
-        <div class="mini-label">Acceptance Rate</div>
+        <div class="mini-label">Acceptance Rate ${tip('Percentage of AI inline completions you accepted vs. total ghost-text shown. ≥30% = good; <10% = model or context may need tuning.')}</div>
         <div class="mini-val data-text" style="font-size:2em;color:${rateColor};">${a.triggered === 0 ? '—' : pct + '%'}</div>
         <div style="font-size:0.75em;color:${rateColor};margin-top:4px;">${rateLabel}</div>
       </div>
       <div class="mini-card">
-        <div class="mini-label">Completions Accepted</div>
+        <div class="mini-label">Completions Accepted ${tip('Count of inline completions explicitly accepted via Tab/Enter. Tracked via the onDidAcceptCompletionItem VS Code event.')}</div>
         <div class="mini-val data-text">${a.accepted.toLocaleString()}</div>
         <div style="font-size:0.75em;color:var(--text-secondary);margin-top:4px;">onDidAcceptCompletionItem</div>
       </div>
       <div class="mini-card">
-        <div class="mini-label">Ghost-text Triggers</div>
+        <div class="mini-label">Ghost-text Triggers ${tip('Approximate count of how many times ghost text was displayed — measured as debounced calls to the inline-completion provider. Used as denominator for acceptance rate.')}</div>
         <div class="mini-val data-text">${a.triggered.toLocaleString()}</div>
         <div style="font-size:0.75em;color:var(--text-secondary);margin-top:4px;">debounced proxy for "shown"</div>
       </div>

@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { Session } from '../types';
+import { PROVIDER_ICONS } from './providerIcons';
 
 type SessionRow = {
   id: string;
@@ -272,8 +273,7 @@ export class SessionsViewProvider {
     parts.push('  function esc(s){return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}');
     parts.push('  function fmtDate(iso){var d=new Date(iso);var now=new Date();var today=new Date(now.getFullYear(),now.getMonth(),now.getDate());var day=new Date(d.getFullYear(),d.getMonth(),d.getDate());var diff=Math.round((today.getTime()-day.getTime())/86400000);var time=d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});if(diff===0)return"Today "+time;if(diff===1)return"Yesterday "+time;return d.toLocaleDateString([],{month:"short",day:"numeric"})+" "+time;}');
     parts.push('  function fmtDur(s,e){var ms=new Date(e).getTime()-new Date(s).getTime();if(ms<=0)return"-";var sec=Math.floor(ms/1000);if(sec<60)return sec+"s";var m=Math.floor(sec/60);if(m<60)return m+"m "+(sec%60)+"s";return Math.floor(m/60)+"h "+(m%60)+"m";}');
-    parts.push('  function badge(p,n){var icons={copilot:"🤖",antigravity:"🚀",claudeCode:"🟣",codex:"⌘"};return"<span class=\\"provider-badge p-"+esc(p)+"\\">"+(icons[p]||"")+" "+esc(n)+"</span>";}');
-    
+    parts.push(`  function badge(p,n){var icons=${JSON.stringify(PROVIDER_ICONS)};return"<span class=\\"provider-badge p-"+esc(p)+"\\">"+(icons[p]||"")+esc(n)+"</span>";}`);
     parts.push('  function breakdown(s){');
     parts.push('    var slots=[{k:"totalInputTokens",c:"#007AFF",l:"Input"},{k:"totalOutputTokens",c:"#39FF14",l:"Output"},{k:"totalThinkingTokens",c:"#f093fb",l:"Thinking"},{k:"totalCacheReadTokens",c:"#FF9F0A",l:"Cache read"},{k:"totalCacheWriteTokens",c:"#FFD60A",l:"Cache write"}];');
     parts.push('    var total=slots.reduce(function(a,sl){return a+(s[sl.k]||0);},0)||s.totalTokens||1;');
