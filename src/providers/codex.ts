@@ -69,6 +69,7 @@ export class CodexProvider extends BaseProvider {
       let id = path.basename(filePath, '.jsonl');
       let workspace = 'unknown';
       let model = 'codex';
+      let title: string | undefined;
 
       for (const line of lines) {
         try {
@@ -81,7 +82,18 @@ export class CodexProvider extends BaseProvider {
             id = entry.payload?.id || id;
             workspace = entry.payload?.cwd || workspace;
             model = entry.payload?.model || entry.payload?.model_slug || model;
+            // Extract title from common session meta fields
+            title = entry.payload?.task || entry.payload?.title || entry.payload?.name || entry.payload?.prompt || title;
             continue;
+          }
+
+          // Capture title from first user message if not already found
+          if (!title) {
+            const role = entry.payload?.role ?? entry.role;
+            const content = entry.payload?.content ?? entry.payload?.text ?? entry.content ?? entry.text;
+            if (role === 'user' && typeof content === 'string' && content.trim().length > 0) {
+              title = content.trim().slice(0, 80).replace(/[\n\r]+/g, ' ');
+            }
           }
 
           if (entry.type !== 'event_msg' || entry.payload?.type !== 'token_count') {
@@ -139,6 +151,7 @@ export class CodexProvider extends BaseProvider {
         models: [...new Set(interactions.map(i => i.model))],
         workspace,
         sourceFile: filePath,
+        title,
         estimatedCostUsd,
       };
     } catch { return null; }

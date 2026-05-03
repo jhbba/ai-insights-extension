@@ -4,10 +4,10 @@ Track token usage, costs, and AI metrics across **GitHub Copilot**, **Antigravit
 
 All data is read from local session logs - **nothing leaves your machine**.
 
-![alt text](./screenshots/screenshot-2.png "AI Insights Dashboard")
-![alt text](./screenshots/screenshot-3.png "AI Insights Dashboard")
-![alt text](./screenshots/screenshot-1.png "Token Usage")
-![alt text](./screenshots/screenshot-4.png "Sessions")
+![alt text](https://github.com/milan-holes/ai-insights-extension/blob/main/screenshots/screenshot-2.png?raw=true "AI Insights Dashboard")
+![alt text](https://github.com/milan-holes/ai-insights-extension/blob/main/screenshots/screenshot-3.png?raw=true "AI Insights Dashboard")
+![alt text](https://github.com/milan-holes/ai-insights-extension/blob/main/screenshots/screenshot-1.png?raw=true "Token Usage")
+![alt text](https://github.com/milan-holes/ai-insights-extension/blob/main/screenshots/screenshot-4.png?raw=true "Sessions")
 
 ## Features
 

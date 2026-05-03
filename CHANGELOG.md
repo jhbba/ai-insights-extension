@@ -2,6 +2,32 @@
 
 All notable changes to the AI Insights extension will be documented in this file.
 
+## [Unreleased] - 2026-05-02
+
+### Added
+
+- **Suggestion Acceptance Rate (Quality Proxy)** — new `🎯 Quality` tab in Usage Analysis. Tracks how often AI ghost-text suggestions are accepted vs. triggered using `vscode.languages.onDidAcceptCompletionItem` (popup acceptances) and a zero-interference `InlineCompletionItemProvider` (debounced trigger count as proxy for suggestions shown). Acceptance rate is colour-coded: green ≥30%, amber 10–29%, red <10%. Resets each VS Code session. New `AcceptanceMetrics` type in `types.ts`; new `src/core/acceptanceTracker.ts` module.
+
+- **Connect GitHub to auto-set budget** — new opt-in command `AI Insights: Connect GitHub to Auto-Set Budget` authenticates via VS Code's built-in GitHub OAuth (`read:user` scope), fetches the user's GitHub plan from the API, and automatically updates `aiInsights.copilotPlanBudget` (Free→$0, Pro→$10, Business→$19, Enterprise→$39). Falls back to a quick-pick selector if the plan field is not returned. Connected status (`@login · plan · $X/month`) is shown in the dashboard above the credits card with a Reconnect button. State persists across sessions via `globalState`.
+
+- **💰 Cost & Impact tab** in Usage Analysis — new tab surfacing the previously-hidden cost intelligence content plus a new "Developer Impact" section: hours saved, value generated (~$), ROI multiplier, and a transparent breakdown of the calculation. Two new settings control the heuristic: `aiInsights.roi.developerHourlyRate` (default $75) and `aiInsights.roi.outputTokensPerHourSaved` (default 3000). Status bar tooltip also shows impact summary (hours saved, value, ROI×).
+- **Status bar now shows hours saved** — format: `$(pulse) 42.3K | 1.2M | ~8.2h saved`, giving an at-a-glance productivity signal without opening the panel.
+- **Instruction Content Quality section** in Workspace Health tab — reads every AI instruction file found (`CLAUDE.md`, `.github/copilot-instructions.md`, `.cursorrules`, `.clinerules`, `AGENTS.md`) and displays word count, whether the file has section headers, and a quality tier (Stub / Basic / Good / Rich). New `InstructionQuality` type added to `RepositoryHygieneReport`.
+- **Open session button** in Sessions table - each row with a source file has an "Open" button that opens the raw JSONL log in a VS Code editor tab.
+- **Export CSV** button in Sessions panel header - exports the currently filtered session list as CSV; opens in a new editor tab (language: csv).
+
+### Fixed
+
+- **Multi-day session token under-count** (root cause of Today showing far fewer tokens than competitors): `aggregateSessions` was filtering `todaySessions` / `yesterdaySessions` / `currentMonth` by `session.startTime`. Long-running Claude Code or Codex sessions started yesterday (or weeks ago) contributed zero tokens to today's metrics even when actively used today. Fix: new `sliceSessionsByDateRange()` helper creates virtual sessions containing only interactions within the requested window, with token totals recalculated. All period metrics now correctly reflect when work actually happened.
+- **Long-running sessions excluded by lookback window** - `isSessionRecent()` checked `session.startTime >= cutoff` so a Claude Code conversation started 31 days ago (but active today) was silently dropped. Now checks `session.endTime >= cutoff` so any session with recent activity stays in scope.
+- **Daily token attribution by interaction date** - `buildDailyUsage` now groups each interaction by its own timestamp, not the session start date. Sessions that span midnight (started yesterday, active today) now show tokens on the days the work actually happened.
+- **Codex session names always blank** - Codex provider now extracts title from `session_meta.payload` fields (`task`, `title`, `name`, `prompt`) and falls back to the first user message found in the rollout JSONL.
+
+### Changed
+
+- **AI Credits shown only for Copilot** - the "Cost" column in the Sessions table now shows a green credits badge only for GitHub Copilot sessions (where 1 credit = $0.01). All other providers (Claude Code, Antigravity, Codex) show `~$X.XXXX` approximate price instead, since they have different pricing models.
+- **Summary "credits" stat** now counts Copilot credits only; shows "Copilot credits N/A" when no Copilot sessions are in the filtered set.
+
 ## [0.1.1] - 2026-05-02
 
 ### Added

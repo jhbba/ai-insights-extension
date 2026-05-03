@@ -20,17 +20,25 @@ import { UsageAnalysisProvider } from './webview/usageAnalysis';
 import { SessionsViewProvider } from './webview/sessionsView';
 import { PricingViewProvider } from './webview/pricingView';
 import { buildHygieneReports } from './core/repositoryHygiene';
+import { AcceptanceTracker } from './core/acceptanceTracker';
 import { Session, AggregatedMetrics, AggregationConfig, AlertThresholds } from './types';
+import { ConnectedGitHubUser, connectGitHubAndDetectPlan } from './core/githubAuth';
 
 let statusBarItem: vscode.StatusBarItem;
 let refreshTimer: NodeJS.Timeout | undefined;
 let allSessions: Session[] = [];
 let latestMetrics: AggregatedMetrics | null = null;
+let connectedGitHubUser: ConnectedGitHubUser | undefined;
 const cacheManager = new CacheManager();
+const acceptanceTracker = new AcceptanceTracker();
 const DEFAULT_SESSION_LOOKBACK_DAYS = 30;
+const GITHUB_USER_STATE_KEY = 'aiInsights.githubUser';
 
 export function activate(context: vscode.ExtensionContext) {
   console.log('[AI Insights] Activating extension...');
+
+  connectedGitHubUser = context.globalState.get<ConnectedGitHubUser>(GITHUB_USER_STATE_KEY);
+  acceptanceTracker.register(context);
 
   const providers = getEnabledProviders();
 
@@ -50,6 +58,8 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('aiInsights.showSessions', () => showSessionsView(context)),
     vscode.commands.registerCommand('aiInsights.showSessionsView', () => showSessionsView(context)),
     vscode.commands.registerCommand('aiInsights.showPricing', () => showPricing(context)),
+    vscode.commands.registerCommand('aiInsights.connectGitHub', () => handleConnectGitHub(context)),
+    vscode.commands.registerCommand('aiInsights.disconnectGitHub', () => handleDisconnectGitHub(context)),
   );
 
   refresh(providers);
@@ -135,7 +145,9 @@ function wasFileModifiedSince(filePath: string, cutoff: Date): boolean {
 }
 
 function isSessionRecent(session: Session, cutoff: Date): boolean {
-  return session.startTime >= cutoff;
+  // Use endTime so long-running sessions (e.g. Claude Code conversations started
+  // weeks ago but still active) aren't dropped by the lookback window.
+  return session.endTime >= cutoff;
 }
 
 async function refresh(providers: BaseProvider[]) {
@@ -204,15 +216,24 @@ function updateStatusBar(metrics: AggregatedMetrics) {
   const monthly = fmt(metrics.currentMonth.totalTokens);
   const budgetPct = Math.round(metrics.budget.budgetUtilizationPct);
 
-  // Show budget alert indicator when over warning threshold
-  const alertCfg = vscode.workspace.getConfiguration('aiInsights');
-  const warnPct = alertCfg.get<number>('alertThresholds.budgetWarningPct', 80);
-  const critPct = alertCfg.get<number>('alertThresholds.budgetCriticalPct', 95);
+  const warnPct = config.get<number>('alertThresholds.budgetWarningPct', 80);
+  const critPct = config.get<number>('alertThresholds.budgetCriticalPct', 95);
   const overageIcon = budgetPct >= critPct ? '$(warning)' : budgetPct >= warnPct ? '$(info)' : '';
 
-  statusBarItem.text = `$(pulse) ${today} | ${monthly} ${overageIcon}`.trim();
+  const hourlyRate = config.get<number>('roi.developerHourlyRate', 75);
+  const tokensPerHour = config.get<number>('roi.outputTokensPerHourSaved', 3000);
+  const hoursSaved = metrics.currentMonth.outputTokens / tokensPerHour;
+  const valueGenerated = hoursSaved * hourlyRate;
+  const fmtHours = hoursSaved < 1
+    ? `${Math.round(hoursSaved * 60)}min`
+    : `${hoursSaved.toFixed(1)}h`;
+
+  statusBarItem.text = `$(pulse) ${today} | ${monthly} | ~${fmtHours} saved ${overageIcon}`.trim();
 
   const cacheHitPct = Math.round(metrics.cache.cacheHitRate * 100);
+  const aiCost = metrics.currentMonth.estimatedCost;
+  const roiMultiplier = aiCost > 0 ? (valueGenerated / aiCost).toFixed(0) : '∞';
+
   const lines = [
     `🧠 AI Insights Token Tracker`,
     ``,
@@ -230,6 +251,12 @@ function updateStatusBar(metrics: AggregatedMetrics) {
     ``,
     `📆 This Month: ${metrics.currentMonth.totalTokens.toLocaleString()} tokens · ${metrics.currentMonth.sessions} sessions`,
     `  Cache Hit Rate: ${cacheHitPct}%`,
+    ``,
+    `⏱ Impact (this month)`,
+    `  Hours saved: ~${fmtHours}`,
+    `  Value generated: ~$${valueGenerated.toFixed(0)}`,
+    `  ROI: ~${roiMultiplier}×`,
+    `  _(${tokensPerHour.toLocaleString()} tokens/hr · $${hourlyRate}/hr rate)_`,
     ``,
     `_Click for dashboard · Updates every 5 min_`,
   );
@@ -255,8 +282,25 @@ async function showDashboard(context: vscode.ExtensionContext) {
     await refresh(getEnabledProviders());
   }
   if (latestMetrics) {
-    DashboardProvider.createPanel(context, latestMetrics);
+    DashboardProvider.createPanel(context, latestMetrics, connectedGitHubUser);
   }
+}
+
+async function handleConnectGitHub(context: vscode.ExtensionContext) {
+  const user = await connectGitHubAndDetectPlan();
+  if (user) {
+    connectedGitHubUser = user;
+    await context.globalState.update(GITHUB_USER_STATE_KEY, user);
+    await refresh(getEnabledProviders());
+    showDashboard(context);
+  }
+}
+
+async function handleDisconnectGitHub(context: vscode.ExtensionContext) {
+  connectedGitHubUser = undefined;
+  await context.globalState.update(GITHUB_USER_STATE_KEY, undefined);
+  vscode.window.showInformationMessage('AI Insights: GitHub account disconnected. Budget is now set manually via settings.');
+  showDashboard(context);
 }
 
 async function showCharts(context: vscode.ExtensionContext) {
@@ -288,10 +332,16 @@ async function showUsageAnalysis(context: vscode.ExtensionContext) {
   })) ?? [];
 
   const reports = buildHygieneReports(allSessions, wsFolders);
-  UsageAnalysisProvider.createPanel(context, latestMetrics, reports);
+  const roiCfg = vscode.workspace.getConfiguration('aiInsights');
+  const roiConfig = {
+    hourlyRate: roiCfg.get<number>('roi.developerHourlyRate', 75),
+    tokensPerHourSaved: roiCfg.get<number>('roi.outputTokensPerHourSaved', 3000),
+  };
+  UsageAnalysisProvider.createPanel(context, latestMetrics, reports, acceptanceTracker.getStats(), roiConfig);
 }
 
 async function showSessionsView(context: vscode.ExtensionContext) {
+  SessionsViewProvider.createPanel(context, allSessions, true);
   await refresh(getEnabledProviders());
   SessionsViewProvider.createPanel(context, allSessions);
 }

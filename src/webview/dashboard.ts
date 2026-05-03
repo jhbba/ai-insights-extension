@@ -3,14 +3,15 @@
  */
 import * as vscode from 'vscode';
 import { AggregatedMetrics } from '../types';
+import { ConnectedGitHubUser } from '../core/githubAuth';
 
 export class DashboardProvider {
   static readonly viewType = 'aiInsights.dashboard';
   private static currentPanel: vscode.WebviewPanel | undefined;
 
-  static createPanel(context: vscode.ExtensionContext, metrics: AggregatedMetrics): vscode.WebviewPanel {
+  static createPanel(context: vscode.ExtensionContext, metrics: AggregatedMetrics, githubUser?: ConnectedGitHubUser): vscode.WebviewPanel {
     if (DashboardProvider.currentPanel) {
-      DashboardProvider.currentPanel.webview.html = DashboardProvider.getHtml(metrics);
+      DashboardProvider.currentPanel.webview.html = DashboardProvider.getHtml(metrics, githubUser);
       DashboardProvider.currentPanel.reveal(vscode.ViewColumn.One);
       return DashboardProvider.currentPanel;
     }
@@ -21,7 +22,7 @@ export class DashboardProvider {
       vscode.ViewColumn.One,
       { enableScripts: true, retainContextWhenHidden: true },
     );
-    panel.webview.html = DashboardProvider.getHtml(metrics);
+    panel.webview.html = DashboardProvider.getHtml(metrics, githubUser);
 
     panel.webview.onDidReceiveMessage(
       (message) => {
@@ -37,6 +38,8 @@ export class DashboardProvider {
           case 'showSessions': vscode.commands.executeCommand('aiInsights.showSessions'); break;
           case 'showSessionsView': vscode.commands.executeCommand('aiInsights.showSessions'); break;
           case 'showPricing': vscode.commands.executeCommand('aiInsights.showPricing'); break;
+          case 'connectGitHub': vscode.commands.executeCommand('aiInsights.connectGitHub'); break;
+          case 'disconnectGitHub': vscode.commands.executeCommand('aiInsights.disconnectGitHub'); break;
         }
       },
       undefined,
@@ -48,7 +51,7 @@ export class DashboardProvider {
     return panel;
   }
 
-  static getHtml(m: AggregatedMetrics): string {
+  static getHtml(m: AggregatedMetrics, githubUser?: ConnectedGitHubUser): string {
     const fmt = (n: number) => n >= 1_000_000 ? (n / 1_000_000).toFixed(1) + 'M' :
       n >= 1_000 ? (n / 1_000).toFixed(1) + 'K' : n.toString();
     const fmtCost = (n: number) => '$' + n.toFixed(4);
@@ -69,7 +72,46 @@ export class DashboardProvider {
     const b = m.budget;
     const budgetPct = Math.min(100, b.budgetUtilizationPct);
 
-    const budgetWidget = '';
+    const PLAN_LABELS: Record<string, string> = { free: 'Free', pro: 'Pro', team: 'Business', enterprise: 'Enterprise' };
+    const ghIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:middle;opacity:0.8"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>`;
+
+    let budgetWidget: string;
+    if (githubUser) {
+      const planLabel = PLAN_LABELS[githubUser.planName] ?? githubUser.planName;
+      const planBudgetCredits = githubUser.monthlyBudgetUsd / 0.01;
+      const usedCredits = copilotMonth.estimatedCost / 0.01;
+      const remainingCredits = Math.max(0, planBudgetCredits - usedCredits);
+      const usedPct = planBudgetCredits > 0 ? Math.min(100, (usedCredits / planBudgetCredits) * 100) : 0;
+      const barColor = usedPct >= 95 ? '#ff6b6b' : usedPct >= 80 ? '#f9e2af' : '#39FF14';
+      const creditsLine = githubUser.monthlyBudgetUsd > 0
+        ? `<div style="margin-top:6px;font-size:0.8em;color:var(--text-secondary)">
+             <span style="color:var(--text-primary);font-weight:500">${remainingCredits.toFixed(0)} credits remaining</span>
+             &nbsp;of ${planBudgetCredits.toFixed(0)} &middot; ${usedCredits.toFixed(0)} used (${usedPct.toFixed(1)}%)
+           </div>
+           <div class="gh-credits-bar" style="margin-top:6px">
+             <div class="gh-credits-bar-fill" style="width:${usedPct.toFixed(1)}%;background:${barColor}"></div>
+           </div>`
+        : '';
+      budgetWidget = `<div class="github-connect connected">
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:center;gap:8px">
+            ${ghIcon}
+            <span>Connected as <strong>@${githubUser.login}</strong> &middot; GitHub ${planLabel} &middot; $${githubUser.monthlyBudgetUsd}/month</span>
+            <div style="margin-left:auto;display:flex;gap:6px;flex-shrink:0">
+              <button class="gh-btn" onclick="vscode.postMessage({command:'connectGitHub'})">Reconnect</button>
+              <button class="gh-btn gh-btn-danger" onclick="vscode.postMessage({command:'disconnectGitHub'})">Disconnect</button>
+            </div>
+          </div>
+          ${creditsLine}
+        </div>
+      </div>`;
+    } else {
+      budgetWidget = `<div class="github-connect">
+        ${ghIcon}
+        <span>Connect GitHub to auto-detect your Copilot plan and set the budget.</span>
+        <button class="gh-btn" style="margin-left:auto" onclick="vscode.postMessage({command:'connectGitHub'})">Connect GitHub</button>
+      </div>`;
+    }
 
     // ── Alert banner ────────────────────────────────────────────────────────
     let alertBanner = '';
@@ -263,6 +305,13 @@ export class DashboardProvider {
   .budget-team { margin-top: 8px; font-size: 0.8em; color: var(--text-secondary); border-top: 1px solid var(--border); padding-top: 8px; }
 
   /* Alerts */
+  .github-connect { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 6px; font-size: 0.85em; margin-bottom: 8px; background: rgba(255,255,255,0.04); border: 1px solid var(--border); color: var(--text-secondary); }
+  .github-connect.connected { border-color: rgba(57,255,20,0.3); background: rgba(57,255,20,0.04); color: var(--text-primary); }
+  .gh-btn { padding: 4px 12px; border-radius: 4px; border: 1px solid var(--border); background: var(--bg-surface); color: var(--text-primary); cursor: pointer; font-size: 0.82em; white-space: nowrap; }
+  .gh-btn:hover { border-color: #39FF14; color: #39FF14; }
+  .gh-btn-danger:hover { border-color: #ff6b6b; color: #ff6b6b; }
+  .gh-credits-bar { margin-top: 8px; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.1); overflow: hidden; }
+  .gh-credits-bar-fill { height: 100%; border-radius: 2px; background: #39FF14; transition: width 0.3s; }
   .alert { padding: 10px 14px; border-radius: 6px; font-size: 0.85em; margin-bottom: 8px; }
   .alert-crit { background: rgba(255,77,77,0.1); border: 1px solid rgba(255,77,77,0.35); color: #ff8a8a; }
   .alert-warn { background: rgba(249,226,175,0.08); border: 1px solid rgba(249,226,175,0.3); color: #f9e2af; }

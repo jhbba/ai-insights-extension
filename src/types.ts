@@ -244,6 +244,16 @@ export interface FileStatus {
   fresh: boolean;
 }
 
+/** Content quality analysis of a single instruction file */
+export interface InstructionQuality {
+  /** Display label, e.g. "CLAUDE.md", "copilot-instructions.md", "AGENTS.md" */
+  file: string;
+  wordCount: number;
+  /** File contains markdown section headers */
+  hasSections: boolean;
+  quality: 'stub' | 'basic' | 'good' | 'rich';
+}
+
 /** Repository-level AI configuration hygiene report */
 export interface RepositoryHygieneReport {
   name: string;
@@ -260,6 +270,8 @@ export interface RepositoryHygieneReport {
     skillFiles: FileStatus;     // .claude/commands/
     customAgents: FileStatus;   // AGENTS.md or .claude/agents/
   };
+  /** Content quality for each instruction/agent file that was found */
+  instructionQuality: InstructionQuality[];
   lastActivity: string | null;
 }
 
@@ -270,6 +282,18 @@ export interface ModelPricing {
   cachedInputCostPerMillion?: number;
   cacheCreationCostPerMillion?: number;
   category: string;
+}
+
+/** Live acceptance-rate metrics tracked since extension activation */
+export interface AcceptanceMetrics {
+  /** Times an inline completion was triggered (debounced 750 ms — proxy for ghost-text shown) */
+  triggered: number;
+  /** Times a completion item was accepted from the popup (via onDidAcceptCompletionItem) */
+  accepted: number;
+  /** accepted / triggered; 0 when no triggers yet */
+  acceptanceRate: number;
+  /** Wall-clock time when tracking began (extension activation) */
+  since: Date;
 }
 
 /** File cache entry for tracking modifications */

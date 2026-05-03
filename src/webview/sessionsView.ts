@@ -20,15 +20,16 @@ type SessionRow = {
   title: string;
   estimatedCostUsd: number;
   aiCredits: number;
+  sourceFile: string;
 };
 
 export class SessionsViewProvider {
   static readonly viewType = 'aiInsights.sessionsView';
   private static currentPanel: vscode.WebviewPanel | undefined;
 
-  static createPanel(context: vscode.ExtensionContext, sessions: Session[]): vscode.WebviewPanel {
+  static createPanel(context: vscode.ExtensionContext, sessions: Session[], refreshing = false): vscode.WebviewPanel {
     const rows = SessionsViewProvider.toRows(sessions);
-    const html = SessionsViewProvider.buildHtml(rows);
+    const html = SessionsViewProvider.buildHtml(rows, refreshing);
 
     if (SessionsViewProvider.currentPanel) {
       SessionsViewProvider.currentPanel.webview.html = html;
@@ -51,6 +52,13 @@ export class SessionsViewProvider {
           vscode.commands.executeCommand('aiInsights.showSessionsView');
         } else if (message.command === 'showDashboard') {
           vscode.commands.executeCommand('aiInsights.showDashboard');
+        } else if (message.command === 'openSession' && message.sourceFile) {
+          vscode.workspace.openTextDocument(vscode.Uri.file(message.sourceFile))
+            .then(doc => vscode.window.showTextDocument(doc))
+            .then(undefined, () => vscode.window.showErrorMessage(`Cannot open: ${message.sourceFile}`));
+        } else if (message.command === 'exportSessions' && message.csv) {
+          vscode.workspace.openTextDocument({ content: message.csv, language: 'csv' })
+            .then(doc => vscode.window.showTextDocument(doc, vscode.ViewColumn.Two));
         }
       },
       undefined,
@@ -89,11 +97,12 @@ export class SessionsViewProvider {
           title: s.title || '',
           estimatedCostUsd: cost,
           aiCredits: Math.round(cost * 100 * 100) / 100,
+          sourceFile: s.sourceFile || '',
         };
       });
   }
 
-  static buildHtml(rows: SessionRow[]): string {
+  static buildHtml(rows: SessionRow[], refreshing = false): string {
     const safe = JSON.stringify(rows).replace(/<\/script>/gi, '<\\/script>');
     const parts: string[] = [];
 
@@ -163,11 +172,25 @@ export class SessionsViewProvider {
     parts.push('.tok-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;}');
     parts.push('.footer{text-align:center;padding:16px;color:var(--text-secondary);font-size:0.75em;font-style:italic;}');
     parts.push('.data-text{font-family:var(--font-data);}');
+    parts.push('.btn-open{background:transparent;border:1px solid var(--border);color:var(--text-secondary);padding:3px 8px;border-radius:3px;cursor:pointer;font-size:0.78em;white-space:nowrap;transition:all 0.15s;}');
+    parts.push('.btn-open:hover{border-color:var(--primary);color:var(--primary);}');
+    parts.push('.approx-price{font-family:var(--font-data);font-size:0.82em;color:var(--text-secondary);}');
+    parts.push('.loading-bar{position:fixed;top:0;left:0;right:0;z-index:100;height:3px;background:rgba(0,122,255,0.15);overflow:hidden;}');
+    parts.push('.loading-bar-fill{height:100%;width:40%;background:var(--primary);border-radius:0 2px 2px 0;animation:loadslide 1.4s ease-in-out infinite;}');
+    parts.push('@keyframes loadslide{0%{transform:translateX(-100%)}60%{transform:translateX(280%)}100%{transform:translateX(280%)}}');
+    parts.push('.loading-banner{background:rgba(0,122,255,0.08);border-bottom:1px solid rgba(0,122,255,0.2);padding:8px 32px;font-size:0.82em;color:#6db3ff;display:flex;align-items:center;gap:8px;}');
+    parts.push('.loading-spinner{width:12px;height:12px;border:2px solid rgba(0,122,255,0.3);border-top-color:var(--primary);border-radius:50%;animation:spin 0.7s linear infinite;flex-shrink:0;}');
+    parts.push('@keyframes spin{to{transform:rotate(360deg)}}');
     parts.push('</style></head><body>');
 
+    if (refreshing) {
+      parts.push('<div class="loading-bar"><div class="loading-bar-fill"></div></div>');
+      parts.push('<div class="loading-banner"><div class="loading-spinner"></div>Refreshing sessions…</div>');
+    }
     parts.push('<div class="header">');
     parts.push('  <h1>&#128203; AI Sessions</h1>');
     parts.push('  <div class="nav">');
+    parts.push('    <button class="btn" id="exportBtn">&#8615; Export CSV</button>');
     parts.push('    <button class="btn btn-primary" id="refreshBtn">&#128260; Refresh</button>');
     parts.push('    <button class="btn" id="dashBtn">&#8592; Dashboard</button>');
     parts.push('  </div>');
@@ -223,17 +246,28 @@ export class SessionsViewProvider {
     parts.push('  var sortKey="startTime";');
     parts.push('  var sortDir=-1;');
     parts.push('  var usageChart, distChart;');
+    parts.push('  var currentFiltered=ALL_SESSIONS.slice();');
     parts.push('  Chart.defaults.font.family="var(--font-primary)";');
     parts.push('  Chart.defaults.color="#c1c6d7";');
 
     parts.push('  document.getElementById("refreshBtn").onclick=function(){vscode.postMessage({command:"refresh"});};');
     parts.push('  document.getElementById("dashBtn").onclick=function(){vscode.postMessage({command:"showDashboard"});};');
+    parts.push('  document.getElementById("exportBtn").onclick=function(){');
+    parts.push('    var headers=["Date","Provider","Title","Workspace","Total Tokens","Input","Output","Thinking","Cache Read","Cache Write","Cost USD","Interactions","Models","Duration"];');
+    parts.push('    var rows=currentFiltered.map(function(s){');
+    parts.push('      return[s.startTime,s.providerName,s.title,s.workspace,s.totalTokens,s.totalInputTokens,s.totalOutputTokens,s.totalThinkingTokens,s.totalCacheReadTokens,s.totalCacheWriteTokens,s.estimatedCostUsd.toFixed(6),s.interactions,(s.models||[]).join(";"),fmtDur(s.startTime,s.endTime)].map(function(v){return\'"\'+String(v||"").replace(/"/g,\'""\')+\'"\';}).join(",");');
+    parts.push('    });');
+    parts.push('    var csv=[headers.join(",")].concat(rows).join("\\n");');
+    parts.push('    vscode.postMessage({command:"exportSessions",csv:csv});');
+    parts.push('  };');
     parts.push('  document.getElementById("providerFilter").onchange=applyFilters;');
     parts.push('  document.getElementById("dateFilter").onchange=applyFilters;');
     parts.push('  document.getElementById("metricType").onchange=applyFilters;');
     parts.push('  document.getElementById("breakdownType").onchange=applyFilters;');
     parts.push('  document.getElementById("searchFilter").oninput=applyFilters;');
 
+    parts.push('  function openSession(idx){var s=currentFiltered[idx];if(s&&s.sourceFile)vscode.postMessage({command:"openSession",sourceFile:s.sourceFile});}');
+    parts.push('  window.openSession=openSession;');
     parts.push('  function fmt(n){if(n>=1e6)return(n/1e6).toFixed(1)+"M";if(n>=1e3)return(n/1e3).toFixed(1)+"K";return String(n||0);}');
     parts.push('  function esc(s){return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}');
     parts.push('  function fmtDate(iso){var d=new Date(iso);var now=new Date();var today=new Date(now.getFullYear(),now.getMonth(),now.getDate());var day=new Date(d.getFullYear(),d.getMonth(),d.getDate());var diff=Math.round((today.getTime()-day.getTime())/86400000);var time=d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});if(diff===0)return"Today "+time;if(diff===1)return"Yesterday "+time;return d.toLocaleDateString([],{month:"short",day:"numeric"})+" "+time;}');
@@ -287,15 +321,17 @@ export class SessionsViewProvider {
     parts.push('      return sortDir*(va>vb?1:va<vb?-1:0);');
     parts.push('    });');
     
+    parts.push('    currentFiltered=f;');
     parts.push('    render(f);');
     parts.push('    updateCharts(f);');
     parts.push('    updateStats(f);');
     parts.push('  }');
 
     parts.push('  function updateStats(sessions){');
-    parts.push('    var totalTokens=0,totalCost=0,totalInteractions=0,repos=new Set();');
+    parts.push('    var totalTokens=0,totalCost=0,totalInteractions=0,copilotCredits=0,repos=new Set();');
     parts.push('    sessions.forEach(function(s){');
     parts.push('      totalTokens+=s.totalTokens;totalCost+=s.estimatedCostUsd;totalInteractions+=s.interactions;');
+    parts.push('      if(s.provider==="copilot")copilotCredits+=s.aiCredits;');
     parts.push('      if(s.workspace)repos.add(s.workspace.replace(/\\\\\\\\/g,"/").split("/").pop()||s.workspace);');
     parts.push('    });');
     parts.push('    document.getElementById("statSessions").textContent=sessions.length;');
@@ -303,7 +339,7 @@ export class SessionsViewProvider {
     parts.push('    document.getElementById("statTokens").textContent=fmt(totalTokens);');
     parts.push('    document.getElementById("statTokenAvg").textContent=sessions.length?fmt(Math.round(totalTokens/sessions.length))+" avg/session":"-";');
     parts.push('    document.getElementById("statCost").textContent="$"+totalCost.toFixed(2);');
-    parts.push('    document.getElementById("statCredits").textContent=(totalCost*100).toFixed(0)+" credits";');
+    parts.push('    document.getElementById("statCredits").textContent=copilotCredits>0?Math.round(copilotCredits)+" Copilot credits":"Copilot credits N/A";');
     parts.push('    document.getElementById("statRepos").textContent=repos.size;');
     parts.push('  }');
 
@@ -334,17 +370,25 @@ export class SessionsViewProvider {
     parts.push('    distChart=new Chart(ctx2,{type:"doughnut",data:{labels:distLabels,datasets:[{data:distLabels.map(l=>dist[l]),backgroundColor:distLabels.map((_,i)=>colors[i%colors.length]),borderWidth:0}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:"right",labels:{boxWidth:12,color:"#c1c6d7",padding:8,font:{size:11}}},title:{display:true,text:"By "+breakdown.charAt(0).toUpperCase()+breakdown.slice(1),color:"#e5e2e1"}},cutout:"65%"}});');
     parts.push('  }');
 
+    parts.push('  function costCell(s){');
+    parts.push('    if(s.provider==="copilot"){');
+    parts.push('      return "<td class=\\"credits-cell\\"><span class=\\"credits-badge\\">"+s.aiCredits.toFixed(2)+" cr</span><br><span style=\\"opacity:0.5;font-size:0.9em\\">$"+s.estimatedCostUsd.toFixed(4)+"</span></td>";');
+    parts.push('    }');
+    parts.push('    return "<td class=\\"credits-cell\\"><span class=\\"approx-price\\">~$"+s.estimatedCostUsd.toFixed(4)+"</span></td>";');
+    parts.push('  }');
+
     parts.push('  function render(sessions){');
     parts.push('    if(sessions.length===0){document.getElementById("tableContainer").innerHTML="<div class=\\"empty-state\\">No sessions match current filters.</div>";return;}');
     parts.push('    var arrow=k=>sortKey===k?(sortDir===-1?" ↓":" ↑"):"";');
     parts.push('    var thc=k=>"sortable"+(sortKey===k?" sorted":"");');
-    parts.push('    var rows=sessions.map(function(s){');
+    parts.push('    var rows=sessions.map(function(s,idx){');
     parts.push('      var repo=s.workspace?(s.workspace.replace(/\\\\\\\\/g,"/").split("/").pop()||s.workspace):"-";');
     parts.push('      var mods=(s.models||[]).map(m=>"<span class=\\"model-tag\\">"+esc(m)+"</span>").join("")||"-";');
     parts.push('      var titleCell=s.title?"<span class=\\"title-cell\\" title=\\""+esc(s.title)+"\\">" +esc(s.title)+"</span>":"<span style=\\"opacity:0.3\\">-</span>";');
-    parts.push('      return "<tr><td class=\\"data-text\\">"+fmtDate(s.startTime)+"</td><td>"+badge(s.provider,s.providerName)+"</td><td>"+titleCell+"</td><td><span class=\\"ws-cell\\" title=\\""+esc(s.workspace||"")+"\\">"+ esc(repo)+"</span></td><td class=\\"data-text\\" style=\\"font-weight:600\\">"+fmt(s.totalTokens)+"</td>"+breakdown(s)+"<td class=\\"credits-cell\\"><span class=\\"credits-badge\\">"+s.aiCredits.toFixed(2)+" cr</span><br><span style=\\"opacity:0.5;font-size:0.9em\\">$"+s.estimatedCostUsd.toFixed(4)+"</span></td><td class=\\"data-text\\">"+s.interactions+"</td><td>"+mods+"</td><td class=\\"data-text\\" style=\\"color:var(--text-secondary)\\">"+fmtDur(s.startTime,s.endTime)+"</td></tr>";');
+    parts.push('      var openBtn=s.sourceFile?"<button class=\\"btn-open\\" onclick=\\"openSession("+idx+")\\">Open</button>":"";');
+    parts.push('      return "<tr><td class=\\"data-text\\">"+fmtDate(s.startTime)+"</td><td>"+badge(s.provider,s.providerName)+"</td><td>"+titleCell+"</td><td><span class=\\"ws-cell\\" title=\\""+esc(s.workspace||"")+"\\">"+ esc(repo)+"</span></td><td class=\\"data-text\\" style=\\"font-weight:600\\">"+fmt(s.totalTokens)+"</td>"+breakdown(s)+costCell(s)+"<td class=\\"data-text\\">"+s.interactions+"</td><td>"+mods+"</td><td class=\\"data-text\\" style=\\"color:var(--text-secondary)\\">"+fmtDur(s.startTime,s.endTime)+"</td><td>"+openBtn+"</td></tr>";');
     parts.push('    }).join("");');
-    parts.push('    document.getElementById("tableContainer").innerHTML="<table><thead><tr><th class=\\""+thc("startTime")+"\\" onclick=\\"sortBy(\'startTime\')\\">Date"+arrow("startTime")+"</th><th>Provider</th><th>Session</th><th>Workspace</th><th class=\\""+thc("totalTokens")+"\\" onclick=\\"sortBy(\'totalTokens\')\\">Tokens"+arrow("totalTokens")+"</th><th>Breakdown</th><th>Cost / Credits</th><th class=\\""+thc("interactions")+"\\" onclick=\\"sortBy(\'interactions\')\\">Interactions"+arrow("interactions")+"</th><th>Models</th><th>Duration</th></tr></thead><tbody>"+rows+"</tbody></table>";');
+    parts.push('    document.getElementById("tableContainer").innerHTML="<table><thead><tr><th class=\\""+thc("startTime")+"\\" onclick=\\"sortBy(\'startTime\')\\">Date"+arrow("startTime")+"</th><th>Provider</th><th>Session</th><th>Workspace</th><th class=\\""+thc("totalTokens")+"\\" onclick=\\"sortBy(\'totalTokens\')\\">Tokens"+arrow("totalTokens")+"</th><th>Breakdown</th><th>Cost</th><th class=\\""+thc("interactions")+"\\" onclick=\\"sortBy(\'interactions\')\\">Interactions"+arrow("interactions")+"</th><th>Models</th><th>Duration</th><th></th></tr></thead><tbody>"+rows+"</tbody></table>";');
     parts.push('  }');
 
     parts.push('  function sortBy(k){sortDir=sortKey===k?-sortDir:-1;sortKey=k;applyFilters();}');

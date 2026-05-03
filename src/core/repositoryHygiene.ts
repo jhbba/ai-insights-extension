@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { FileStatus, RepositoryHygieneReport, Session } from '../types';
+import { FileStatus, InstructionQuality, RepositoryHygieneReport, Session } from '../types';
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -13,6 +13,28 @@ function checkFile(...candidates: string[]): FileStatus {
     } catch { /* not found */ }
   }
   return { exists: false, fresh: false };
+}
+
+const INSTRUCTION_CANDIDATES: Array<{ relPath: string; label: string }> = [
+  { relPath: 'CLAUDE.md', label: 'CLAUDE.md' },
+  { relPath: 'claude.md', label: 'CLAUDE.md' },
+  { relPath: '.github/copilot-instructions.md', label: 'copilot-instructions.md' },
+  { relPath: '.cursorrules', label: '.cursorrules' },
+  { relPath: '.clinerules', label: '.clinerules' },
+  { relPath: 'AGENTS.md', label: 'AGENTS.md' },
+];
+
+function analyzeInstructionFile(filePath: string, label: string): InstructionQuality | null {
+  try {
+    const content = fs.readFileSync(filePath, 'utf-8');
+    const words = content.trim().split(/\s+/).filter(Boolean).length;
+    const hasSections = /^#{1,3}\s+\S/m.test(content);
+    const quality: InstructionQuality['quality'] =
+      words < 50 ? 'stub' : words < 200 ? 'basic' : words < 500 ? 'good' : 'rich';
+    return { file: label, wordCount: words, hasSections, quality };
+  } catch {
+    return null;
+  }
 }
 
 function checkDir(dirPath: string): FileStatus {
@@ -67,6 +89,14 @@ export function scanRepository(
     customAgents = checkDir(path.join(repoPath, '.claude', 'agents'));
   }
 
+  const instructionQuality: InstructionQuality[] = [];
+  for (const { relPath, label } of INSTRUCTION_CANDIDATES) {
+    const analysis = analyzeInstructionFile(path.join(repoPath, relPath), label);
+    if (analysis && !instructionQuality.some(q => q.file === label)) {
+      instructionQuality.push(analysis);
+    }
+  }
+
   const scoreFile = (f: FileStatus) => !f.exists ? 0 : f.fresh ? 20 : 10;
   const score = scoreFile(instructions) + scoreFile(agentSetup) + scoreFile(mcpConfig) +
     scoreFile(skillFiles) + scoreFile(customAgents);
@@ -74,6 +104,7 @@ export function scanRepository(
   return {
     name, repoPath, sessions, interactions, score,
     files: { instructions, agentSetup, mcpConfig, skillFiles, customAgents },
+    instructionQuality,
     lastActivity,
   };
 }
@@ -213,6 +244,7 @@ export function buildHygieneReports(
           instructions: missing, agentSetup: missing,
           mcpConfig: missing, skillFiles: missing, customAgents: missing,
         },
+        instructionQuality: [],
         lastActivity: stats.lastActivity,
       });
     }

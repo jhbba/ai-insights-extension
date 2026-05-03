@@ -13,21 +13,46 @@ import {
   computeSessionComplexity,
 } from './budgetManager';
 
+/**
+ * Returns copies of sessions containing only the interactions that fall within
+ * [start, end). Token totals are recalculated from the filtered interactions.
+ * Sessions with no matching interactions are excluded.
+ * This lets buildMetrics correctly attribute multi-day sessions to the right period.
+ */
+function sliceSessionsByDateRange(sessions: Session[], start: Date, end: Date): Session[] {
+  const result: Session[] = [];
+  for (const sess of sessions) {
+    const interactions = sess.interactions.filter(i => i.timestamp >= start && i.timestamp < end);
+    if (interactions.length === 0) { continue; }
+    result.push({
+      ...sess,
+      interactions,
+      totalTokens: interactions.reduce((s, i) => s + i.totalTokens, 0),
+      totalInputTokens: interactions.reduce((s, i) => s + i.inputTokens, 0),
+      totalOutputTokens: interactions.reduce((s, i) => s + i.outputTokens, 0),
+      totalThinkingTokens: interactions.reduce((s, i) => s + i.thinkingTokens, 0),
+      totalCacheReadTokens: interactions.reduce((s, i) => s + i.cacheReadTokens, 0),
+      totalCacheWriteTokens: interactions.reduce((s, i) => s + i.cacheWriteTokens, 0),
+    });
+  }
+  return result;
+}
+
 export function aggregateSessions(sessions: Session[], config: AggregationConfig = {}): AggregatedMetrics {
   const now = new Date();
-  const todayStr = toLocalDateKey(now);
   const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
   const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
+  const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
 
-  const yesterday = new Date(now);
-  yesterday.setDate(yesterday.getDate() - 1);
-  const yesterdayStr = toLocalDateKey(yesterday);
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const tomorrowStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  const yesterdayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
 
-  const todaySessions = sessions.filter(s => toLocalDateKey(s.startTime) === todayStr);
-  const yesterdaySessions = sessions.filter(s => toLocalDateKey(s.startTime) === yesterdayStr);
-  const currentMonthSessions = sessions.filter(s => s.startTime >= currentMonthStart);
-  const lastMonthSessions = sessions.filter(s => s.startTime >= lastMonthStart && s.startTime <= lastMonthEnd);
+  // Slice by interaction timestamps so multi-day sessions contribute to the correct period
+  const todaySessions = sliceSessionsByDateRange(sessions, todayStart, tomorrowStart);
+  const yesterdaySessions = sliceSessionsByDateRange(sessions, yesterdayStart, todayStart);
+  const currentMonthSessions = sliceSessionsByDateRange(sessions, currentMonthStart, tomorrowStart);
+  const lastMonthSessions = sliceSessionsByDateRange(sessions, lastMonthStart, new Date(lastMonthEnd.getTime() + 1));
 
   const byProvider: Record<ProviderId, ProviderMetrics> = {
     copilot: buildMetrics(sessions.filter(s => s.provider === 'copilot')),
@@ -232,36 +257,46 @@ function buildDailyUsage(sessions: Session[]): DailyUsage[] {
   const byDay = new Map<string, DailyUsage>();
 
   for (const sess of sessions) {
-    const dateStr = toLocalDateKey(sess.startTime);
-    let day = byDay.get(dateStr);
-    if (!day) {
-      day = {
-        date: dateStr, provider: sess.provider,
-        totalTokens: 0, inputTokens: 0, outputTokens: 0,
-        thinkingTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0,
-        sessions: 0, interactions: 0, estimatedCost: 0,
-        models: {}, toolCalls: {}, repositories: {},
-      };
-      byDay.set(dateStr, day);
-    }
-    day.totalTokens += sess.totalTokens;
-    day.inputTokens += sess.totalInputTokens;
-    day.outputTokens += sess.totalOutputTokens;
-    day.thinkingTokens += sess.totalThinkingTokens;
-    day.cacheReadTokens += sess.totalCacheReadTokens;
-    day.cacheWriteTokens += sess.totalCacheWriteTokens;
-    day.sessions += 1;
-    day.interactions += sess.interactions.length;
-
     const repoName = sess.workspace ? sess.workspace.split(/[/\\]/).pop() || 'Unknown' : 'Unknown';
-    day.repositories[repoName] = (day.repositories[repoName] || 0) + sess.totalTokens;
+    // Track which days this session is active so we count it once per active day
+    const sessionDays = new Set<string>();
 
     for (const i of sess.interactions) {
+      // Attribute each interaction to the day it actually occurred
+      const dateStr = toLocalDateKey(i.timestamp);
+      sessionDays.add(dateStr);
+
+      let day = byDay.get(dateStr);
+      if (!day) {
+        day = {
+          date: dateStr, provider: sess.provider,
+          totalTokens: 0, inputTokens: 0, outputTokens: 0,
+          thinkingTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0,
+          sessions: 0, interactions: 0, estimatedCost: 0,
+          models: {}, toolCalls: {}, repositories: {},
+        };
+        byDay.set(dateStr, day);
+      }
+
+      day.totalTokens += i.totalTokens;
+      day.inputTokens += i.inputTokens;
+      day.outputTokens += i.outputTokens;
+      day.thinkingTokens += i.thinkingTokens;
+      day.cacheReadTokens += i.cacheReadTokens;
+      day.cacheWriteTokens += i.cacheWriteTokens;
+      day.interactions += 1;
       day.models[i.model] = (day.models[i.model] || 0) + i.totalTokens;
+      day.repositories[repoName] = (day.repositories[repoName] || 0) + i.totalTokens;
       day.estimatedCost += calculateCost(i.model, i.inputTokens, i.outputTokens, i.cacheReadTokens, i.cacheWriteTokens);
       for (const t of i.toolCalls) {
         day.toolCalls[t] = (day.toolCalls[t] || 0) + 1;
       }
+    }
+
+    // Count this session once for each day it had interactions
+    for (const dateStr of sessionDays) {
+      const day = byDay.get(dateStr);
+      if (day) { day.sessions += 1; }
     }
   }
 
