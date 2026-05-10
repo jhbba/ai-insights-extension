@@ -268,6 +268,7 @@ export class CopilotProvider extends BaseProvider {
           totalTokens: inputTokens + outputTokens + thinkingTokens,
           mode: this.getModeFromRequest(req),
           toolCalls,
+          promptPreview: inputText ? inputText.trim().substring(0, 200) : undefined,
         });
       }
 
@@ -361,6 +362,7 @@ export class CopilotProvider extends BaseProvider {
             this.estimateTokens(entry.completion || entry.response || '');
           const thinkingTokens = this.pickTokenCount(entry, ['tokens.thinking', 'usage.thinking_tokens']) || 0;
 
+          const promptText = (entry.prompt || entry.message || '').toString().trim();
           interactions.push({
             timestamp,
             model,
@@ -372,6 +374,7 @@ export class CopilotProvider extends BaseProvider {
             totalTokens: inputTokens + outputTokens + thinkingTokens,
             mode: entry.mode || 'chat',
             toolCalls: [],
+            promptPreview: promptText ? promptText.substring(0, 200) : undefined,
           });
         } catch {
           // Skip malformed lines
@@ -492,6 +495,7 @@ export class CopilotProvider extends BaseProvider {
         totalTokens: inputTokens + outputTokens + thinkingTokens,
         mode: this.getModeFromRequest(request),
         toolCalls: this.extractToolCalls(request),
+        promptPreview: inputText ? inputText.trim().substring(0, 200) : undefined,
       });
     }
 

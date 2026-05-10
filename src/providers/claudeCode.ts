@@ -57,6 +57,7 @@ export class ClaudeCodeProvider extends BaseProvider {
       let cwd: string | null = null;
       let title: string | undefined;
       const seenMessageIds = new Set<string>();
+      let pendingUserPreview: string | undefined;
 
       for (const line of lines) {
         try {
@@ -72,6 +73,13 @@ export class ClaudeCodeProvider extends BaseProvider {
           if (!startTime) { startTime = ts; }
           endTime = ts;
           if (!cwd && entry.cwd) { cwd = entry.cwd; }
+
+          // Capture user message text so we can attach it to the next assistant turn
+          const entryRole = entry.role ?? entry.type ?? entry.message?.role;
+          if (entryRole === 'user') {
+            const content = entry.message?.content ?? entry.content ?? '';
+            pendingUserPreview = this.extractTextPreview(content, 200);
+          }
 
           // Claude Code provides actual token counts
           const usage = entry.usage || entry.message?.usage || entry.tokens || {};
@@ -101,7 +109,9 @@ export class ClaudeCodeProvider extends BaseProvider {
             totalTokens: inputTokens + outputTokens + thinkingTokens + cacheReadTokens + cacheWriteTokens,
             mode: entry.type || entry.role || entry.message?.role || 'chat',
             toolCalls: (entry.tool_calls || entry.toolCalls || []).map((t: any) => t.name || t.function?.name || 'unknown'),
+            promptPreview: pendingUserPreview,
           });
+          pendingUserPreview = undefined; // consumed by first assistant turn after this user message
         } catch { /* skip line */ }
       }
 
@@ -130,6 +140,32 @@ export class ClaudeCodeProvider extends BaseProvider {
         estimatedCostUsd,
       };
     } catch { return null; }
+  }
+
+  private extractTextPreview(content: unknown, maxLen: number): string | undefined {
+    // Strip system-injected XML blocks that Claude Code injects into user messages
+    const stripSystemTags = (s: string): string =>
+      s
+        .replace(/<ide_opened_file[\s\S]*?<\/ide_opened_file>/g, '')
+        .replace(/<system-reminder[\s\S]*?<\/system-reminder>/g, '')
+        .replace(/<user-prompt-submit-hook[\s\S]*?<\/user-prompt-submit-hook>/g, '')
+        .replace(/<[a-z_]+>[\s\S]*?<\/antml:[a-z_]+>/g, '')
+        .trim();
+
+    if (typeof content === 'string') {
+      const cleaned = stripSystemTags(content);
+      return cleaned.substring(0, maxLen) || undefined;
+    }
+    if (Array.isArray(content)) {
+      const text = content
+        .filter((c: any) => c?.type === 'text' && typeof c?.text === 'string')
+        .map((c: any) => stripSystemTags(c.text as string))
+        .filter(s => s.length > 0)
+        .join(' ')
+        .trim();
+      return text.substring(0, maxLen) || undefined;
+    }
+    return undefined;
   }
 
   private extractProject(filePath: string): string {

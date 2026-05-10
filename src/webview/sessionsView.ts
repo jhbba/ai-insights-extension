@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { Session } from '../types';
 import { PROVIDER_ICONS } from './providerIcons';
+import { computeContextRotScore, ContextRotScore } from '../core/contextRot';
 
 type SessionRow = {
   id: string;
@@ -22,6 +23,7 @@ type SessionRow = {
   estimatedCostUsd: number;
   aiCredits: number;
   sourceFile: string;
+  contextRot: ContextRotScore;
 };
 
 export class SessionsViewProvider {
@@ -99,6 +101,7 @@ export class SessionsViewProvider {
           estimatedCostUsd: cost,
           aiCredits: Math.round(cost * 100 * 100) / 100,
           sourceFile: s.sourceFile || '',
+          contextRot: computeContextRotScore(s),
         };
       });
   }
@@ -123,7 +126,7 @@ export class SessionsViewProvider {
     parts.push('.btn:hover{background:rgba(255,255,255,0.05);}');
     parts.push('.btn-primary{background:var(--primary);color:white;border:none;box-shadow:0 0 15px var(--primary-glow);}');
     parts.push('.btn-primary:hover{background:#005bc1;}');
-    
+
     parts.push('.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px;}');
     parts.push('.summary-card{background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;padding:20px;text-align:center;transition:transform 0.2s;position:relative;overflow:hidden;}');
     parts.push('.summary-card:hover{transform:translateY(-2px);border-color:rgba(0,122,255,0.3);}');
@@ -137,15 +140,15 @@ export class SessionsViewProvider {
     parts.push('.filter-bar select,.filter-bar input{background:var(--bg-base);border:1px solid var(--border);color:var(--text-primary);padding:7px 12px;border-radius:4px;font-size:0.85em;font-family:var(--font-primary);outline:none;}');
     parts.push('.filter-bar select:focus,.filter-bar input:focus{border-color:var(--primary);}');
     parts.push('.filter-bar input{min-width:250px;}');
-    
+
     parts.push('.chart-section{background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;padding:24px;margin-bottom:32px;display:grid;grid-template-columns:2fr 1fr;gap:24px;min-height:350px;}');
     parts.push('.chart-wrap{position:relative;height:300px;}');
     parts.push('@media(max-width:1000px){.chart-section{grid-template-columns:1fr;}}');
-    
+
     parts.push('.legend{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px;font-size:0.78em;color:var(--text-secondary);}');
     parts.push('.legend-item{display:flex;align-items:center;gap:5px;}');
     parts.push('.legend-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}');
-    
+
     parts.push('.section{background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;overflow-x:auto;margin-bottom:32px;}');
     parts.push('table{width:100%;min-width:1100px;border-collapse:collapse;}');
     parts.push('th{text-align:left;padding:11px 14px;background:var(--bg-surface-high);color:var(--text-secondary);font-size:0.72em;text-transform:uppercase;letter-spacing:0.05em;border-bottom:1px solid var(--border);font-weight:500;white-space:nowrap;}');
@@ -155,7 +158,7 @@ export class SessionsViewProvider {
     parts.push('td{padding:10px 14px;border-bottom:1px solid var(--border);font-size:0.875em;vertical-align:middle;}');
     parts.push('tr:last-child td{border-bottom:none;}');
     parts.push('tr:hover td{background:rgba(255,255,255,0.02);}');
-    
+
     parts.push('.provider-badge{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:3px;font-size:0.8em;font-weight:500;white-space:nowrap;}');
     parts.push('.p-copilot{background:rgba(0,200,100,0.1);color:#00c864;}');
     parts.push('.p-antigravity{background:rgba(240,147,251,0.1);color:#f093fb;}');
@@ -176,12 +179,22 @@ export class SessionsViewProvider {
     parts.push('.btn-open{background:transparent;border:1px solid var(--border);color:var(--text-secondary);padding:3px 8px;border-radius:3px;cursor:pointer;font-size:0.78em;white-space:nowrap;transition:all 0.15s;}');
     parts.push('.btn-open:hover{border-color:var(--primary);color:var(--primary);}');
     parts.push('.approx-price{font-family:var(--font-data);font-size:0.82em;color:var(--text-secondary);}');
+    parts.push('.ctx-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:3px;font-size:0.78em;font-weight:600;white-space:nowrap;cursor:default;}');
+    parts.push('.ctx-healthy{background:rgba(0,200,100,0.1);color:#00c864;}');
+    parts.push('.ctx-warning{background:rgba(255,159,10,0.12);color:#FF9F0A;}');
+    parts.push('.ctx-stale{background:rgba(255,59,48,0.12);color:#FF3B30;}');
+    parts.push('.ctx-na{background:rgba(255,255,255,0.04);color:rgba(193,198,215,0.4);font-weight:400;}');
     parts.push('.loading-bar{position:fixed;top:0;left:0;right:0;z-index:100;height:3px;background:rgba(0,122,255,0.15);overflow:hidden;}');
     parts.push('.loading-bar-fill{height:100%;width:40%;background:var(--primary);border-radius:0 2px 2px 0;animation:loadslide 1.4s ease-in-out infinite;}');
     parts.push('@keyframes loadslide{0%{transform:translateX(-100%)}60%{transform:translateX(280%)}100%{transform:translateX(280%)}}');
     parts.push('.loading-banner{background:rgba(0,122,255,0.08);border-bottom:1px solid rgba(0,122,255,0.2);padding:8px 32px;font-size:0.82em;color:#6db3ff;display:flex;align-items:center;gap:8px;}');
     parts.push('.loading-spinner{width:12px;height:12px;border:2px solid rgba(0,122,255,0.3);border-top-color:var(--primary);border-radius:50%;animation:spin 0.7s linear infinite;flex-shrink:0;}');
     parts.push('@keyframes spin{to{transform:rotate(360deg)}}');
+    parts.push('.pagination{display:flex;align-items:center;justify-content:center;gap:12px;padding:14px 16px;border-top:1px solid var(--border);}');
+    parts.push('.pagination button{background:transparent;border:1px solid var(--border);color:var(--text-primary);padding:6px 14px;border-radius:4px;cursor:pointer;font-size:0.85em;transition:all 0.2s;}');
+    parts.push('.pagination button:hover:not([disabled]){background:rgba(255,255,255,0.05);border-color:var(--primary);}');
+    parts.push('.pagination button[disabled]{opacity:0.3;cursor:default;}');
+    parts.push('.page-info{font-size:0.85em;color:var(--text-secondary);}');
     parts.push('</style></head><body>');
 
     if (refreshing) {
@@ -211,7 +224,7 @@ export class SessionsViewProvider {
     parts.push('    <option value="7d">Last 7 Days</option>');
     parts.push('    <option value="lastMonth">Last Month</option>');
     parts.push('    <option value="thisMonth">This Month</option>');
-    parts.push('    <option value="thisYear">This Year</option>');
+    parts.push('    <option value="thisYear" selected>This Year</option>');
     parts.push('    <option value="all">All Time</option>');
     parts.push('  </select></div>');
     parts.push('  <div class="filter-group"><span class="filter-label">Provider</span><select id="providerFilter"><option value="">All</option><option value="claudeCode">Claude Code</option><option value="copilot">Copilot</option><option value="antigravity">Antigravity</option><option value="codex">Codex</option></select></div>');
@@ -248,6 +261,8 @@ export class SessionsViewProvider {
     parts.push('  var sortDir=-1;');
     parts.push('  var usageChart, distChart;');
     parts.push('  var currentFiltered=ALL_SESSIONS.slice();');
+    parts.push('  var currentPage=0;');
+    parts.push('  var PAGE_SIZE=50;');
     parts.push('  Chart.defaults.font.family="var(--font-primary)";');
     parts.push('  Chart.defaults.color="#c1c6d7";');
 
@@ -261,6 +276,8 @@ export class SessionsViewProvider {
     parts.push('    var csv=[headers.join(",")].concat(rows).join("\\n");');
     parts.push('    vscode.postMessage({command:"exportSessions",csv:csv});');
     parts.push('  };');
+    parts.push('  function saveState(){try{vscode.setState({df:document.getElementById("dateFilter").value,pf:document.getElementById("providerFilter").value,mt:document.getElementById("metricType").value,bt:document.getElementById("breakdownType").value,sf:document.getElementById("searchFilter").value,sk:sortKey,sd:sortDir});}catch(e){}}');
+    parts.push('  (function restoreState(){try{var st=vscode.getState();if(!st)return;if(st.df)document.getElementById("dateFilter").value=st.df;if(st.pf)document.getElementById("providerFilter").value=st.pf;if(st.mt)document.getElementById("metricType").value=st.mt;if(st.bt)document.getElementById("breakdownType").value=st.bt;if(st.sf)document.getElementById("searchFilter").value=st.sf;if(st.sk)sortKey=st.sk;if(st.sd!=null)sortDir=st.sd;}catch(e){}})();');
     parts.push('  document.getElementById("providerFilter").onchange=applyFilters;');
     parts.push('  document.getElementById("dateFilter").onchange=applyFilters;');
     parts.push('  document.getElementById("metricType").onchange=applyFilters;');
@@ -293,7 +310,7 @@ export class SessionsViewProvider {
     parts.push('    var monthStart=new Date(now.getFullYear(),now.getMonth(),1).getTime();');
     parts.push('    var lastMonthStart=new Date(now.getFullYear(),now.getMonth()-1,1).getTime();');
     parts.push('    var lastMonthEnd=new Date(now.getFullYear(),now.getMonth(),0,23,59,59,999).getTime();');
-    
+
     parts.push('    var f=ALL_SESSIONS.filter(function(s){');
     parts.push('      if(pv&&s.provider!==pv)return false;');
     parts.push('      var st=new Date(s.startTime).getTime();');
@@ -311,7 +328,7 @@ export class SessionsViewProvider {
     parts.push('      }');
     parts.push('      return true;');
     parts.push('    });');
-    
+
     parts.push('    f.sort(function(a,b){');
     parts.push('      var va,vb;');
     parts.push('      if(sortKey==="startTime"){va=new Date(a.startTime).getTime();vb=new Date(b.startTime).getTime();}');
@@ -320,11 +337,13 @@ export class SessionsViewProvider {
     parts.push('      else{va=a[sortKey];vb=b[sortKey];}');
     parts.push('      return sortDir*(va>vb?1:va<vb?-1:0);');
     parts.push('    });');
-    
+
     parts.push('    currentFiltered=f;');
+    parts.push('    currentPage=0;');
     parts.push('    render(f);');
     parts.push('    updateCharts(f);');
     parts.push('    updateStats(f);');
+    parts.push('    saveState();');
     parts.push('  }');
 
     parts.push('  function updateStats(sessions){');
@@ -346,24 +365,30 @@ export class SessionsViewProvider {
     parts.push('  function updateCharts(sessions){');
     parts.push('    var metric=document.getElementById("metricType").value;');
     parts.push('    var breakdown=document.getElementById("breakdownType").value;');
-    parts.push('    var daily={}, dist={};');
-    
+    parts.push('    var daily={}, dailySessions={}, dist={};');
+
     parts.push('    sessions.forEach(function(s){');
     parts.push('      var d=s.startTime.split("T")[0];');
     parts.push('      var val=(metric==="tokens")?s.totalTokens:1;');
     parts.push('      daily[d]=(daily[d]||0)+val;');
-    
+    parts.push('      dailySessions[d]=(dailySessions[d]||0)+1;');
+
     parts.push('      var key="Unknown";');
     parts.push('      if(breakdown==="model")key=(s.models&&s.models.length)?s.models[0]:"Unknown";');
     parts.push('      else if(breakdown==="workspace")key=s.workspace?(s.workspace.replace(/\\\\\\\\/g,"/").split("/").pop()||s.workspace):"Unknown";');
     parts.push('      else key=s.providerName||s.provider;');
     parts.push('      dist[key]=(dist[key]||0)+val;');
     parts.push('    });');
-    
+
     parts.push('    var sortedDates=Object.keys(daily).sort();');
     parts.push('    var ctx1=document.getElementById("usageChart");if(usageChart)usageChart.destroy();');
-    parts.push('    usageChart=new Chart(ctx1,{type:"bar",data:{labels:sortedDates,datasets:[{label:metric==="tokens"?"Tokens":"Sessions",data:sortedDates.map(d=>daily[d]),backgroundColor:"rgba(0,122,255,0.5)",borderColor:"#007AFF",borderWidth:1}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},title:{display:true,text:"Daily "+(metric==="tokens"?"Token Consumption":"Usage"),color:"#e5e2e1"}},scales:{y:{beginAtZero:true,grid:{color:"rgba(255,255,255,0.05)"},ticks:{callback:v=>fmt(v)}},x:{grid:{display:false}}}}});');
-    
+    parts.push('    var ds1={type:"bar",label:metric==="tokens"?"Tokens":"Sessions",data:sortedDates.map(d=>daily[d]),backgroundColor:"rgba(0,122,255,0.5)",borderColor:"#007AFF",borderWidth:1,yAxisID:"y"};');
+    parts.push('    var ds2={type:"line",label:"Sessions",data:sortedDates.map(d=>dailySessions[d]||0),borderColor:"#39FF14",backgroundColor:"rgba(57,255,20,0.08)",borderWidth:2,pointRadius:3,pointBackgroundColor:"#39FF14",tension:0.3,yAxisID:"y2"};');
+    parts.push('    var showDual=metric==="tokens";');
+    parts.push('    var chartScales={y:{beginAtZero:true,grid:{color:"rgba(255,255,255,0.05)"},ticks:{color:"#007AFF",callback:function(v){return fmt(v);}},position:"left"},x:{grid:{display:false}}};');
+    parts.push('    if(showDual)chartScales.y2={beginAtZero:true,grid:{display:false},ticks:{color:"#39FF14",stepSize:1},position:"right"};');
+    parts.push('    usageChart=new Chart(ctx1,{type:"bar",data:{labels:sortedDates,datasets:showDual?[ds1,ds2]:[ds1]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:"index",intersect:false},plugins:{legend:{display:showDual,labels:{color:"#c1c6d7",font:{size:11},boxWidth:12,padding:12}},title:{display:true,text:"Daily "+(metric==="tokens"?"Token Consumption":"Usage"),color:"#e5e2e1"}},scales:chartScales}});');
+
     parts.push('    var distLabels=Object.keys(dist).sort((a,b)=>dist[b]-dist[a]);');
     parts.push('    var colors=["#007AFF","#39FF14","#f093fb","#FF9F0A","#FFD60A","#00c864","#FF3B30","#5856D6","#FF9500"];');
     parts.push('    var ctx2=document.getElementById("distChart");if(distChart)distChart.destroy();');
@@ -377,22 +402,42 @@ export class SessionsViewProvider {
     parts.push('    return "<td class=\\"credits-cell\\"><span class=\\"approx-price\\">~$"+s.estimatedCostUsd.toFixed(4)+"</span></td>";');
     parts.push('  }');
 
+    parts.push('  function contextHealthCell(s){');
+    parts.push('    var cr=s.contextRot;');
+    parts.push('    if(!cr)return"<td><span class=\\"ctx-badge ctx-na\\">—</span></td>";');
+    parts.push('    var icons={"healthy":"●","warning":"●","stale":"●"};');
+    parts.push('    var labels={"healthy":"Healthy","warning":"Warn","stale":"Stale"};');
+    parts.push('    var ageStr=cr.sessionAgeMinutes<60?Math.round(cr.sessionAgeMinutes)+"m":Math.floor(cr.sessionAgeMinutes/60)+"h"+(Math.round(cr.sessionAgeMinutes%60)>0?Math.round(cr.sessionAgeMinutes%60)+"m":"");');
+    parts.push('    var growthNote=cr.turnsCount<6?" (limited: <6 turns)":"";');
+    parts.push('    var tip="Score: "+cr.score+"/10\\nTurns: "+cr.turnsCount+"\\nAge: "+ageStr+"\\nInput bloat: "+cr.inputBloatFactor.toFixed(1)+"x"+growthNote+"\\nOutput trend: "+cr.outputDeclineFactor.toFixed(2)+"x"+growthNote;');
+    parts.push('    return"<td><span class=\\"ctx-badge ctx-"+cr.label+"\\" title=\\""+tip.replace(/"/g,\'&quot;\').replace(/\\n/g,\'&#10;\')+"\\">" +icons[cr.label]+" "+labels[cr.label]+"</span></td>";');
+    parts.push('  }');
     parts.push('  function render(sessions){');
     parts.push('    if(sessions.length===0){document.getElementById("tableContainer").innerHTML="<div class=\\"empty-state\\">No sessions match current filters.</div>";return;}');
+    parts.push('    var totalPages=Math.max(1,Math.ceil(sessions.length/PAGE_SIZE));');
+    parts.push('    if(currentPage>=totalPages)currentPage=totalPages-1;');
+    parts.push('    var pageStart=currentPage*PAGE_SIZE;');
+    parts.push('    var pageSessions=sessions.slice(pageStart,pageStart+PAGE_SIZE);');
     parts.push('    var arrow=k=>sortKey===k?(sortDir===-1?" ↓":" ↑"):"";');
     parts.push('    var thc=k=>"sortable"+(sortKey===k?" sorted":"");');
-    parts.push('    var rows=sessions.map(function(s,idx){');
+    parts.push('    var rows=pageSessions.map(function(s,relIdx){');
+    parts.push('      var idx=pageStart+relIdx;');
     parts.push('      var repo=s.workspace?(s.workspace.replace(/\\\\\\\\/g,"/").split("/").pop()||s.workspace):"-";');
     parts.push('      var mods=(s.models||[]).map(m=>"<span class=\\"model-tag\\">"+esc(m)+"</span>").join("")||"-";');
     parts.push('      var titleCell=s.title?"<span class=\\"title-cell\\" title=\\""+esc(s.title)+"\\">" +esc(s.title)+"</span>":"<span style=\\"opacity:0.3\\">-</span>";');
     parts.push('      var openBtn=s.sourceFile?"<button class=\\"btn-open\\" onclick=\\"openSession("+idx+")\\">Open</button>":"";');
-    parts.push('      return "<tr><td class=\\"data-text\\">"+fmtDate(s.startTime)+"</td><td>"+badge(s.provider,s.providerName)+"</td><td>"+titleCell+"</td><td><span class=\\"ws-cell\\" title=\\""+esc(s.workspace||"")+"\\">"+ esc(repo)+"</span></td><td class=\\"data-text\\" style=\\"font-weight:600\\">"+fmt(s.totalTokens)+"</td>"+breakdown(s)+costCell(s)+"<td class=\\"data-text\\">"+s.interactions+"</td><td>"+mods+"</td><td class=\\"data-text\\" style=\\"color:var(--text-secondary)\\">"+fmtDur(s.startTime,s.endTime)+"</td><td>"+openBtn+"</td></tr>";');
+    parts.push('      return "<tr><td class=\\"data-text\\">"+fmtDate(s.startTime)+"</td><td>"+badge(s.provider,s.providerName)+"</td><td>"+titleCell+"</td><td><span class=\\"ws-cell\\" title=\\""+esc(s.workspace||"")+"\\">"+ esc(repo)+"</span></td><td class=\\"data-text\\" style=\\"font-weight:600\\">"+fmt(s.totalTokens)+"</td>"+breakdown(s)+costCell(s)+contextHealthCell(s)+"<td class=\\"data-text\\">"+s.interactions+"</td><td>"+mods+"</td><td class=\\"data-text\\" style=\\"color:var(--text-secondary)\\">"+fmtDur(s.startTime,s.endTime)+"</td><td>"+openBtn+"</td></tr>";');
     parts.push('    }).join("");');
-    parts.push('    document.getElementById("tableContainer").innerHTML="<table><thead><tr><th class=\\""+thc("startTime")+"\\" onclick=\\"sortBy(\'startTime\')\\">Date"+arrow("startTime")+"</th><th>Provider</th><th>Session</th><th>Workspace</th><th class=\\""+thc("totalTokens")+"\\" onclick=\\"sortBy(\'totalTokens\')\\">Tokens"+arrow("totalTokens")+"</th><th>Breakdown</th><th>Cost</th><th class=\\""+thc("interactions")+"\\" onclick=\\"sortBy(\'interactions\')\\">Interactions"+arrow("interactions")+"</th><th>Models</th><th>Duration</th><th></th></tr></thead><tbody>"+rows+"</tbody></table>";');
+    parts.push('    var pgHtml=totalPages>1?"<div class=\\"pagination\\"><button onclick=\\"goToPage("+(currentPage-1)+")\\" "+(currentPage===0?"disabled":"")+">&#8592; Prev</button><span class=\\"page-info\\">Page "+(currentPage+1)+" of "+totalPages+" &middot; "+sessions.length+" sessions</span><button onclick=\\"goToPage("+(currentPage+1)+")\\" "+(currentPage>=totalPages-1?"disabled":"")+">Next &#8594;</button></div>":"";');
+    parts.push('    var ctxHint="Context Health \\u24d8";');
+    parts.push('    var ctxTip="Score 0\\u201310 from 5 signals:\\n\\u2022 Turn count  (>40 turns \\u2192 +1, >80 \\u2192 +2)\\n\\u2022 Session age  (>60 min \\u2192 +1, >120 min \\u2192 +2)\\n\\u2022 Input bloat  last-third vs first-third avg input (>1.5\\u00d7 \\u2192 +1, >2\\u00d7 \\u2192 +2, >4\\u00d7 \\u2192 +3)\\n\\u2022 Output decline  last-third vs first-third avg output (<0.65\\u00d7 \\u2192 +1, <0.4\\u00d7 \\u2192 +2)\\n\\u2022 Total input size  (>80K \\u2192 +1, >200K \\u2192 +2)\\n\\nGrowth signals require \\u22656 turns to activate.\\n\\n\\u25cf 0\\u20133 Healthy  \\u25cf 4\\u20136 Warn  \\u25cf 7\\u201310 Stale";');
+    parts.push('    document.getElementById("tableContainer").innerHTML="<table><thead><tr><th class=\\""+thc("startTime")+"\\" onclick=\\"sortBy(\'startTime\')\\">Date"+arrow("startTime")+"</th><th>Provider</th><th>Session</th><th>Workspace</th><th class=\\""+thc("totalTokens")+"\\" onclick=\\"sortBy(\'totalTokens\')\\">Tokens"+arrow("totalTokens")+"</th><th>Breakdown</th><th>Cost</th><th style=\\"cursor:help\\" title=\\""+ctxTip.replace(/"/g,\'&quot;\').replace(/\\n/g,\'&#10;\')+"\\">" +ctxHint+"</th><th class=\\""+thc("interactions")+"\\" onclick=\\"sortBy(\'interactions\')\\">Interactions"+arrow("interactions")+"</th><th>Models</th><th>Duration</th><th></th></tr></thead><tbody>"+rows+"</tbody></table>"+pgHtml;');
     parts.push('  }');
 
-    parts.push('  function sortBy(k){sortDir=sortKey===k?-sortDir:-1;sortKey=k;applyFilters();}');
+    parts.push('  function sortBy(k){sortDir=sortKey===k?-sortDir:-1;sortKey=k;currentPage=0;applyFilters();}');
+    parts.push('  function goToPage(p){currentPage=p;render(currentFiltered);}');
     parts.push('  window.sortBy=sortBy;');
+    parts.push('  window.goToPage=goToPage;');
     parts.push('  applyFilters();');
     parts.push('})();');
     parts.push('</script>');

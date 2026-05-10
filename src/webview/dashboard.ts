@@ -39,6 +39,7 @@ export class DashboardProvider {
           case 'showSessions': vscode.commands.executeCommand('aiInsights.showSessions'); break;
           case 'showSessionsView': vscode.commands.executeCommand('aiInsights.showSessions'); break;
           case 'showPricing': vscode.commands.executeCommand('aiInsights.showPricing'); break;
+          case 'showPromptHistory': vscode.commands.executeCommand('aiInsights.showPromptHistory'); break;
           case 'connectGitHub': vscode.commands.executeCommand('aiInsights.connectGitHub'); break;
           case 'disconnectGitHub': vscode.commands.executeCommand('aiInsights.disconnectGitHub'); break;
         }
@@ -172,12 +173,58 @@ export class DashboardProvider {
         </tr>`;
       }).join('');
 
+    const cmInputTokens = Object.values(copilotMonth.modelUsage).reduce((s, u) => s + u.uncachedInputTokens, 0);
+    const cmInputCost = Object.values(copilotMonth.modelUsage).reduce((s, u) => s + u.inputCost, 0);
+    const cmCachedCost = Object.values(copilotMonth.modelUsage).reduce((s, u) => s + u.cachedInputCost, 0);
+    const cmOutputCost = Object.values(copilotMonth.modelUsage).reduce((s, u) => s + u.outputCost, 0);
+    const cmCacheWriteCost = Object.values(copilotMonth.modelUsage).reduce((s, u) => s + u.cacheWriteCost, 0);
+
+    const lmInputTokens = Object.values(copilotLastMonth.modelUsage).reduce((s, u) => s + u.uncachedInputTokens, 0);
+    const lmInputCost = Object.values(copilotLastMonth.modelUsage).reduce((s, u) => s + u.inputCost, 0);
+    const lmCachedCost = Object.values(copilotLastMonth.modelUsage).reduce((s, u) => s + u.cachedInputCost, 0);
+    const lmOutputCost = Object.values(copilotLastMonth.modelUsage).reduce((s, u) => s + u.outputCost, 0);
+    const lmCacheWriteCost = Object.values(copilotLastMonth.modelUsage).reduce((s, u) => s + u.cacheWriteCost, 0);
+
+    const hasCacheWrite = copilotMonth.cacheWriteTokens > 0 || copilotLastMonth.cacheWriteTokens > 0;
+
     const copilotCostSummaryRows = `
-      <tr><td>Input tokens</td><td class="data-text">${fmt(Object.values(copilotMonth.modelUsage).reduce((s, usage) => s + usage.uncachedInputTokens, 0))}</td><td class="data-text">${fmtCost(Object.values(copilotMonth.modelUsage).reduce((s, usage) => s + usage.inputCost, 0))}</td></tr>
-      <tr><td>Cached input tokens</td><td class="data-text">${fmt(copilotMonth.cacheReadTokens)}</td><td class="data-text">${fmtCost(Object.values(copilotMonth.modelUsage).reduce((s, usage) => s + usage.cachedInputCost, 0))}</td></tr>
-      <tr><td>Output tokens</td><td class="data-text">${fmt(copilotMonth.outputTokens)}</td><td class="data-text">${fmtCost(Object.values(copilotMonth.modelUsage).reduce((s, usage) => s + usage.outputCost, 0))}</td></tr>
-      ${copilotMonth.cacheWriteTokens > 0 ? `<tr><td>Cache write tokens</td><td class="data-text">${fmt(copilotMonth.cacheWriteTokens)}</td><td class="data-text">${fmtCost(Object.values(copilotMonth.modelUsage).reduce((s, usage) => s + usage.cacheWriteCost, 0))}</td></tr>` : ''}
-      <tr><td><strong>Total GitHub AI Credits</strong></td><td class="data-text">${fmt(copilotMonth.totalTokens)}</td><td class="data-text"><strong>${fmtCredits(copilotMonth.estimatedCost)} credits / ${fmtCost2(copilotMonth.estimatedCost)}</strong></td></tr>`;
+      <tr>
+        <td>Input tokens</td>
+        <td class="data-text">${fmt(cmInputTokens)}</td><td class="data-text">${fmtCost(cmInputCost)}</td>
+        <td class="data-text" style="color:var(--text-secondary)">${fmt(lmInputTokens)}</td><td class="data-text" style="color:var(--text-secondary)">${fmtCost(lmInputCost)}</td>
+      </tr>
+      <tr>
+        <td>Cached input tokens</td>
+        <td class="data-text">${fmt(copilotMonth.cacheReadTokens)}</td><td class="data-text">${fmtCost(cmCachedCost)}</td>
+        <td class="data-text" style="color:var(--text-secondary)">${fmt(copilotLastMonth.cacheReadTokens)}</td><td class="data-text" style="color:var(--text-secondary)">${fmtCost(lmCachedCost)}</td>
+      </tr>
+      <tr>
+        <td>Output tokens</td>
+        <td class="data-text">${fmt(copilotMonth.outputTokens)}</td><td class="data-text">${fmtCost(cmOutputCost)}</td>
+        <td class="data-text" style="color:var(--text-secondary)">${fmt(copilotLastMonth.outputTokens)}</td><td class="data-text" style="color:var(--text-secondary)">${fmtCost(lmOutputCost)}</td>
+      </tr>
+      ${hasCacheWrite ? `<tr>
+        <td>Cache write tokens</td>
+        <td class="data-text">${fmt(copilotMonth.cacheWriteTokens)}</td><td class="data-text">${fmtCost(cmCacheWriteCost)}</td>
+        <td class="data-text" style="color:var(--text-secondary)">${fmt(copilotLastMonth.cacheWriteTokens)}</td><td class="data-text" style="color:var(--text-secondary)">${fmtCost(lmCacheWriteCost)}</td>
+      </tr>` : ''}
+      <tr>
+        <td><strong>Total GitHub AI Credits</strong></td>
+        <td class="data-text">${fmt(copilotMonth.totalTokens)}</td><td class="data-text"><strong>${fmtCredits(copilotMonth.estimatedCost)} credits / ${fmtCost2(copilotMonth.estimatedCost)}</strong></td>
+        <td class="data-text" style="color:var(--text-secondary)">${fmt(copilotLastMonth.totalTokens)}</td><td class="data-text" style="color:var(--text-secondary)">${fmtCredits(copilotLastMonth.estimatedCost)} credits / ${fmtCost2(copilotLastMonth.estimatedCost)}</td>
+      </tr>`;
+
+    // ── Daily chart data (last 30 days, aggregated across providers) ─────────
+    const dailyByDate: Record<string, { tokens: number; cost: number }> = {};
+    for (const d of m.daily) {
+      if (!dailyByDate[d.date]) { dailyByDate[d.date] = { tokens: 0, cost: 0 }; }
+      dailyByDate[d.date].tokens += d.totalTokens;
+      dailyByDate[d.date].cost += d.estimatedCost;
+    }
+    const chartLabels = Object.keys(dailyByDate).sort().slice(-30);
+    const chartTokens = chartLabels.map(d => dailyByDate[d].tokens);
+    const chartCosts = chartLabels.map(d => dailyByDate[d].cost);
+    const chartDataJson = JSON.stringify({ labels: chartLabels, tokens: chartTokens, costs: chartCosts });
 
     // ── Repo cost rows ───────────────────────────────────────────────────────
     const repoRows = Object.entries(m.currentMonth.costByRepository)
@@ -265,6 +312,7 @@ export class DashboardProvider {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AI Insights Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600&display=swap');
   :root {
@@ -346,6 +394,7 @@ export class DashboardProvider {
       <div class="btn-group">
         <button class="btn-tab" onclick="window.vscode.postMessage({command:'showUsageAnalysis'})">📈 Usage</button>
         <button class="btn-tab" onclick="window.vscode.postMessage({command:'showSessions'})">📋 Sessions</button>
+        <button class="btn-tab" onclick="window.vscode.postMessage({command:'showPromptHistory'})">⚡ Prompts</button>
         <button class="btn-tab" onclick="window.vscode.postMessage({command:'showPricing'})">💳 Copilot Pricing</button>
         <button class="btn-tab" onclick="window.vscode.postMessage({command:'showDiagnostics'})">🩺 Diagnostics</button>  
       </div>
@@ -384,6 +433,15 @@ export class DashboardProvider {
       <div class="card-value data-text">${fmt(m.projectedYear.totalTokens)}</div>
       <div class="card-sub">${m.projectedYear.sessions} sessions</div>
     </div>
+  </div>
+
+  <!-- ── Daily usage chart ─────────────────────────────────────────── -->
+  <div class="section">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+      <h2 style="margin:0">📈 Daily Token Usage - Last 30 Days</h2>
+      <button class="btn-tab" style="background:rgba(0,122,255,0.12);color:#007AFF;border:1px solid rgba(0,122,255,0.25);border-radius:6px;padding:6px 14px" onclick="window.vscode.postMessage({command:'showPromptHistory'})">⚡ View Prompt History</button>
+    </div>
+    <div style="position:relative;height:240px"><canvas id="dashChart"></canvas></div>
   </div>
 
   <!-- ── Fluency Score ─────────────────────────────────────────────── -->
@@ -455,9 +513,15 @@ export class DashboardProvider {
   </div>
 
   <div class="section">
-    <h2>💳 GitHub Copilot AI Credits Summary (This Month)</h2>
+    <h2>💳 GitHub Copilot AI Credits Summary</h2>
     <table>
-      <thead><tr><th>Category</th><th>Tokens</th><th>Cost</th></tr></thead>
+      <thead>
+        <tr>
+          <th>Category</th>
+          <th>Tokens (This Month)</th><th>Cost (This Month)</th>
+          <th style="color:var(--text-secondary)">Tokens (Last Month)</th><th style="color:var(--text-secondary)">Cost (Last Month)</th>
+        </tr>
+      </thead>
       <tbody>${copilotCostSummaryRows}</tbody>
     </table>
   </div>
@@ -476,6 +540,76 @@ export class DashboardProvider {
     if (typeof window.vscode === 'undefined') {
       window.vscode = acquireVsCodeApi();
     }
+    (function() {
+      var data = ${chartDataJson};
+      if (!data.labels.length) { return; }
+      Chart.defaults.font.family = 'Inter, system-ui, sans-serif';
+      Chart.defaults.color = '#c1c6d7';
+      new Chart(document.getElementById('dashChart'), {
+        type: 'bar',
+        data: {
+          labels: data.labels,
+          datasets: [
+            {
+              type: 'bar',
+              label: 'Tokens',
+              data: data.tokens,
+              backgroundColor: 'rgba(0,122,255,0.45)',
+              borderColor: '#007AFF',
+              borderWidth: 1,
+              yAxisID: 'y',
+            },
+            {
+              type: 'line',
+              label: 'Cost (USD)',
+              data: data.costs,
+              borderColor: '#39FF14',
+              backgroundColor: 'rgba(57,255,20,0.06)',
+              borderWidth: 2,
+              pointRadius: 3,
+              pointBackgroundColor: '#39FF14',
+              tension: 0.3,
+              fill: true,
+              yAxisID: 'y2',
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: { labels: { color: '#c1c6d7', font: { size: 11 }, boxWidth: 12, padding: 12 } },
+            tooltip: {
+              callbacks: {
+                label: function(ctx) {
+                  if (ctx.datasetIndex === 0) {
+                    var v = ctx.parsed.y;
+                    return ' Tokens: ' + (v >= 1e6 ? (v/1e6).toFixed(1)+'M' : v >= 1e3 ? (v/1e3).toFixed(1)+'K' : v);
+                  }
+                  return ' Cost: $' + ctx.parsed.y.toFixed(4);
+                },
+              },
+            },
+          },
+          scales: {
+            x: { grid: { display: false }, ticks: { maxRotation: 45, font: { size: 10 } } },
+            y: {
+              beginAtZero: true,
+              position: 'left',
+              grid: { color: 'rgba(255,255,255,0.05)' },
+              ticks: { color: '#007AFF', callback: function(v) { return v >= 1e6 ? (v/1e6).toFixed(1)+'M' : v >= 1e3 ? (v/1e3).toFixed(1)+'K' : v; } },
+            },
+            y2: {
+              beginAtZero: true,
+              position: 'right',
+              grid: { display: false },
+              ticks: { color: '#39FF14', callback: function(v) { return '$' + Number(v).toFixed(3); } },
+            },
+          },
+        },
+      });
+    })();
   </script>
 </body>
 </html>`;

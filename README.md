@@ -21,7 +21,7 @@ Track usage across AI coding assistants simultaneously:
 
 | Provider           | Data Source                        | Token Data                                       |
 | ------------------ | ---------------------------------- | ------------------------------------------------ |
-| **GitHub Copilot** | `workspaceStorage/*/chatSessions/` | Actual counts when available, else estimated     |
+| **GitHub Copilot** | `workspaceStorage/*/chatSessions/` (VS Code, Cursor, VSCodium, Insiders) | Actual counts when available, else estimated     |
 | **Antigravity**    | `~/.gemini/antigravity/brain/`     | Estimated from conversation text                 |
 | **Claude Code**    | `~/.claude/projects/`              | Actual input/output/cache token counts           |
 | **Codex**          | `~/.codex/sessions/`               | Actual usage snapshots from local Codex rollouts |
@@ -121,9 +121,23 @@ npx @vscode/vsce package
 
 ### GitHub Copilot
 
-- **Linux**: `~/.config/Code/User/workspaceStorage/{hash}/chatSessions/`
-- **macOS**: `~/Library/Application Support/Code/User/workspaceStorage/{hash}/chatSessions/`
-- **Windows**: `%APPDATA%/Code/User/workspaceStorage/{hash}/chatSessions/`
+Supported IDEs (sessions stored as JSON — readable):
+
+| IDE | Linux | macOS | Windows |
+|-----|-------|-------|---------|
+| VS Code | `~/.config/Code/User/workspaceStorage/` | `~/Library/Application Support/Code/User/workspaceStorage/` | `%APPDATA%\Code\User\workspaceStorage\` |
+| VS Code Insiders | `~/.config/Code - Insiders/User/workspaceStorage/` | `~/Library/Application Support/Code - Insiders/User/workspaceStorage/` | `%APPDATA%\Code - Insiders\User\workspaceStorage\` |
+| Cursor | `~/.config/Cursor/User/workspaceStorage/` | `~/Library/Application Support/Cursor/User/workspaceStorage/` | `%APPDATA%\Cursor\User\workspaceStorage\` |
+| VSCodium | `~/.config/VSCodium/User/workspaceStorage/` | `~/Library/Application Support/VSCodium/User/workspaceStorage/` | `%APPDATA%\VSCodium\User\workspaceStorage\` |
+
+WSL is also supported — the extension automatically scans Windows-side AppData paths via `/mnt/c/Users/`.
+
+**Not supported** (binary session formats, not parseable):
+
+| IDE | Reason |
+|-----|--------|
+| JetBrains (PyCharm, WebStorm, PhpStorm, IntelliJ…) | Sessions stored in Xodus binary DB (`.idea/copilot/chatSessions/`), no JSON files |
+| Visual Studio | Sessions stored as binary files (`.vs/<project>/copilot-chat/sessions/`) |
 
 ### Antigravity
 

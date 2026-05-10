@@ -2,9 +2,26 @@
 
 All notable changes to the AI Insights extension will be documented in this file.
 
-## [Unreleased] - 2026-05-02
+## [Unreleased] - 2026-05-10
 
 ### Added
+
+- **Context Rot identifier** in Sessions table — each session row now shows a **Context Health** badge derived from static session signals: turn count, session age, input-token growth rate (first-third vs last-third of session), output-token decline rate, and total input size. Score 0–3 → 🟢 Healthy, 4–6 → 🟡 Warn, 7–10 → 🔴 Stale. Hovering the badge shows the raw breakdown (score, turns, age, bloat factor, output trend). Sessions with fewer than 3 turns show "—" (insufficient data). Logic lives in new `src/core/contextRot.ts`.
+
+- **Prompt preview + Open log in Prompt History** — each row in the Prompt History table now shows the first ~80 chars of the user's message in a **Prompt** column (full text on hover), plus an **Open log** button that opens the raw JSONL session file in an editor tab. Text is extracted at parse time: Claude Code peeks at `user`-role entries before they are token-filtered; Copilot providers use the already-extracted `inputText`. The preview is carried as `Interaction.promptPreview` → `PromptRecord.promptPreview`; `PromptRecord` also carries `sourceFile` from the parent session.
+
+- **Dashboard daily token/cost chart** — a "Daily Token Usage — Last 30 Days" combo chart (bars = tokens, green line = cost USD) is now rendered in the dashboard using Chart.js. Placed after summary cards, with an **⚡ View Prompt History** action button in the section header.
+
+- **Prompt-Level Cost History panel** — new `AI Insights: Show Prompt-Level Cost History` command (`aiInsights.showPromptHistory`), also reachable via the `⚡ Prompts` button in the dashboard nav. Interactions within the same session are **grouped by a 2-minute gap threshold** so each row represents one user prompt plus all its agent turns (tool calls, sub-calls, thinking). Columns: time, provider, primary model, agent-turn count badge, aggregated token bar (in/out/cache), total cost (summed per-model), response time (first→last turn), workspace. Summary cards show prompts today, avg cost/prompt, avg turns/prompt, avg response time, top model. Sparkline shows cost-per-prompt across last 50 (oldest→newest); tooltip shows cost + turn count. `PromptHistoryStore` in `src/core/promptHistory.ts` rebuilds on every refresh cycle.
+
+- **GitHub Copilot AI Credits Summary — previous month column** — the "💳 GitHub Copilot AI Credits Summary" table on the dashboard now shows a side-by-side comparison: "This Month" (bright) and "Last Month" (dimmed) columns for input tokens, cached input tokens, output tokens, optional cache-write tokens, and the total AI Credits / USD. Cache-write row is shown only when either month has non-zero cache writes.
+
+## [Unreleased] - 2026-05-04
+
+### Added
+
+- **Sessions view date range fixed** — `DEFAULT_SESSION_LOOKBACK_DAYS` raised from 30 to 400 so "Last Month", "This Year", and "All Time" filters in the Sessions panel actually return data beyond the previous 30 days. The backend was silently discarding any session file older than 30 days before the client-side date filters could see them.
+- **Sessions table pagination** — Sessions table now shows 50 rows per page with Prev / Next controls and a "Page X of Y · N sessions" counter. Page resets to 1 on any filter or sort change. "Open" button index is now page-offset-corrected so it opens the right file regardless of which page is shown.
 
 - **Official provider logos** — replaced emoji placeholders with inline SVG brand logos across all views (dashboard provider table, sessions badge, usage analysis ROI table): GitHub mark for Copilot, Google Gemini 4-star for Antigravity, Anthropic A-mark for Claude Code, OpenAI logo for Codex. New shared `src/webview/providerIcons.ts` module.
 

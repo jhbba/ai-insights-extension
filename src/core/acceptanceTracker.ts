@@ -16,7 +16,7 @@ export class AcceptanceTracker {
   private _triggered = 0;
   private _accepted = 0;
   private _lastTrigger = 0;
-  /** Debounce window in ms — one "shown" event per typing pause */
+  /** Debounce window in ms - one "shown" event per typing pause */
   private readonly DEBOUNCE_MS = 750;
   private readonly _since: Date;
 

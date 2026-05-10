@@ -27,8 +27,8 @@ const PLAN_LABELS: Record<string, string> = {
 };
 
 const PLAN_PICKS = [
-  { label: 'Free', description: '$0/month — limited completions & chat', plan: 'free' },
-  { label: 'Pro', description: '$10/month — unlimited completions, 300 premium requests', plan: 'pro' },
+  { label: 'Free', description: '$0/month - limited completions & chat', plan: 'free' },
+  { label: 'Pro', description: '$10/month - unlimited completions, 300 premium requests', plan: 'pro' },
   { label: 'Business', description: '$19/user/month', plan: 'team' },
   { label: 'Enterprise', description: '$39/user/month', plan: 'enterprise' },
 ];
@@ -56,7 +56,7 @@ export async function connectGitHubAndDetectPlan(): Promise<ConnectedGitHubUser 
     if (!res.ok) { throw new Error(`HTTP ${res.status}`); }
     user = await res.json() as GitHubUser;
   } catch (err) {
-    vscode.window.showErrorMessage(`AI Insights: Could not reach GitHub API — ${err}`);
+    vscode.window.showErrorMessage(`AI Insights: Could not reach GitHub API - ${err}`);
     return undefined;
   }
 
@@ -65,10 +65,10 @@ export async function connectGitHubAndDetectPlan(): Promise<ConnectedGitHubUser 
   if (user.plan?.name) {
     planName = user.plan.name.toLowerCase();
   } else {
-    // plan field requires elevated OAuth scope — fall back to manual pick
+    // plan field requires elevated OAuth scope - fall back to manual pick
     const picked = await vscode.window.showQuickPick(
       PLAN_PICKS,
-      { title: `Connected as @${user.login} — Select your Copilot plan` },
+      { title: `Connected as @${user.login} - Select your Copilot plan` },
     );
     if (!picked) { return undefined; }
     planName = (picked as typeof PLAN_PICKS[0]).plan;

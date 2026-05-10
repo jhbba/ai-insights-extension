@@ -2,7 +2,7 @@
   "name": "ai-insights",
   "displayName": "AI Insights - Token Tracker",
   "description": "Track token usage, costs, and AI metrics across GitHub Copilot, Antigravity, Claude Code, and Codex.",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "publisher": "thewalking-dev",
   "license": "MIT",
   "icon": "assets/logo.png",
@@ -72,6 +72,12 @@
         "title": "Show Copilot Model Pricing",
         "category": "AI Insights",
         "icon": "$(tag)"
+      },
+      {
+        "command": "aiInsights.showPromptHistory",
+        "title": "Show Prompt-Level Cost History",
+        "category": "AI Insights",
+        "icon": "$(history)"
       },
       {
         "command": "aiInsights.connectGitHub",

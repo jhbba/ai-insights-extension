@@ -23,6 +23,8 @@ import { buildHygieneReports } from './core/repositoryHygiene';
 import { AcceptanceTracker } from './core/acceptanceTracker';
 import { Session, AggregatedMetrics, AggregationConfig, AlertThresholds } from './types';
 import { ConnectedGitHubUser, connectGitHubAndDetectPlan } from './core/githubAuth';
+import { PromptHistoryStore } from './core/promptHistory';
+import { PromptHistoryViewProvider } from './webview/promptHistoryView';
 
 let statusBarItem: vscode.StatusBarItem;
 let refreshTimer: NodeJS.Timeout | undefined;
@@ -30,8 +32,9 @@ let allSessions: Session[] = [];
 let latestMetrics: AggregatedMetrics | null = null;
 let connectedGitHubUser: ConnectedGitHubUser | undefined;
 const cacheManager = new CacheManager();
+const promptHistoryStore = new PromptHistoryStore();
 const acceptanceTracker = new AcceptanceTracker();
-const DEFAULT_SESSION_LOOKBACK_DAYS = 30;
+const DEFAULT_SESSION_LOOKBACK_DAYS = 400;
 const GITHUB_USER_STATE_KEY = 'aiInsights.githubUser';
 
 export function activate(context: vscode.ExtensionContext) {
@@ -60,6 +63,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('aiInsights.showPricing', () => showPricing(context)),
     vscode.commands.registerCommand('aiInsights.connectGitHub', () => handleConnectGitHub(context)),
     vscode.commands.registerCommand('aiInsights.disconnectGitHub', () => handleDisconnectGitHub(context)),
+    vscode.commands.registerCommand('aiInsights.showPromptHistory', () => showPromptHistory(context)),
   );
 
   refresh(providers);
@@ -181,6 +185,7 @@ async function refresh(providers: BaseProvider[]) {
 
     allSessions = dedupeSessions(sessions);
     latestMetrics = aggregateSessions(allSessions, getAggregationConfig());
+    promptHistoryStore.update(allSessions);
     updateStatusBar(latestMetrics);
   } catch (err) {
     console.error('[AI Insights] Refresh failed:', err);
@@ -344,6 +349,13 @@ async function showSessionsView(context: vscode.ExtensionContext) {
   SessionsViewProvider.createPanel(context, allSessions, true);
   await refresh(getEnabledProviders());
   SessionsViewProvider.createPanel(context, allSessions);
+}
+
+async function showPromptHistory(context: vscode.ExtensionContext) {
+  if (promptHistoryStore.size === 0) {
+    await refresh(getEnabledProviders());
+  }
+  PromptHistoryViewProvider.createPanel(context, promptHistoryStore.getAll());
 }
 
 function showPricing(context: vscode.ExtensionContext) {

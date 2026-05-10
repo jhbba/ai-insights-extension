@@ -21,6 +21,8 @@ export interface Interaction {
   mode: string;
   /** Tool calls made during this interaction */
   toolCalls: string[];
+  /** First ~200 chars of the user message that triggered this interaction */
+  promptPreview?: string;
 }
 
 /** A normalized session from any provider */
@@ -286,7 +288,7 @@ export interface ModelPricing {
 
 /** Live acceptance-rate metrics tracked since extension activation */
 export interface AcceptanceMetrics {
-  /** Times an inline completion was triggered (debounced 750 ms — proxy for ghost-text shown) */
+  /** Times an inline completion was triggered (debounced 750 ms - proxy for ghost-text shown) */
   triggered: number;
   /** Times a completion item was accepted from the popup (via onDidAcceptCompletionItem) */
   accepted: number;
