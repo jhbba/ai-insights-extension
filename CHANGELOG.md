@@ -2,6 +2,50 @@
 
 All notable changes to the AI Insights extension will be documented in this file.
 
+## [Unreleased] - 2026-05-14
+
+### Added
+
+- **Token Calculator** (`AI Insights: Open Token Calculator`) — new webview panel that estimates input token costs before sending to an AI provider. File picker renders as a collapsible folder tree (folder checkboxes select/deselect entire subtrees); search falls back to a flat filtered list. A prompt textarea adds to the file token total. The context window section has a provider switcher (GitHub Copilot | Claude | OpenAI | Google) that dynamically shows all current models with a progress bar, context-fill %, and input cost. The GitHub Copilot tab additionally shows AI credits per request (1 credit = $0.01) alongside USD cost.
+
+- **Unified navigation header on all webviews** — every panel (Overview, Usage, Copilot, Diagnostics, Sessions, Prompt History) now renders the same slim topbar + page-tab bar. Tab set: Overview | Usage | Copilot | Diagnostics | Sessions | Prompts | Calculator. Token Calculator is now reachable from the nav bar in any view.
+
+- **Logo image in topbar** — `assets/logo.png` is now displayed in the top-left corner of every webview, replacing the previous green gradient dot placeholder.
+
+### Changed
+
+- **Filter bar label visibility** — PROVIDER and PERIOD group labels are now rendered at lower opacity (`rgba(193,198,215,0.38)`) and smaller letter-spacing to visually subordinate them relative to the filter chips, making the two groups easier to scan at a glance.
+
+## [Unreleased] - 2026-05-12
+
+### Added
+
+- **Provider filter applies to all dashboard widgets** — selecting a provider in the switcher bar now also updates the "Token Usage by Period" table and the "Usage by Repository" table to show data for that provider only. The Projected Year column is dimmed and shows `—` for specific providers (no per-provider projection available). The repo section title updates to show the active provider name.
+
+### Fixed
+
+- **Cache Hit Rate card now reflects all providers** — `computeCacheMetrics` was called with `currentMonthCopilotMetrics` (Copilot only), so the dashboard cache hit card always showed 0% because Copilot logs contain no cache data. Fixed to use `currentMonthMetrics` (all providers).
+
+- **Projected Year column now populates all rows** — Input, Output, Thinking, and Cache read tokens, plus Avg tokens/session and Avg interactions/session, were hardcoded to `-` in the "Token Usage by Period" table. The aggregator now projects each token sub-type with the year multiplier and the template renders the projected values.
+
+- **Cache hit column shows `—` for providers without cache data** — GitHub Copilot and Antigravity logs don't expose cache token counts, so the "Usage by Provider" table was incorrectly displaying `0%` instead of `—`. The cell now shows `—` when both `cacheReadTokens` and `cacheWriteTokens` are zero (no cache data reported), and only computes a percentage when at least one exists.
+
+## [Unreleased] - 2026-05-11
+
+### Added
+
+- **Provider switcher on dashboard** — a pill-style switcher bar (Overall | GitHub Copilot | Claude Code | Codex | Antigravity) now appears at the top of the dashboard below the header. Selecting a provider shows that provider's dedicated card set (tokens today, this month, last month; Copilot also shows AI credits card) and updates the daily chart to show only that provider's data. Selecting a non-Overall provider hides the "Usage by Provider" all-time table. Switching back to Overall restores all cards and the table.
+
+- **Copilot credits pill** — when a GitHub account is connected, a fixed-position `🐙 X credits · @login` pill appears in the dashboard footer area; clicking it opens the GitHub Copilot screen directly.
+
+- **GitHub Copilot screen** (`💳 Copilot Pricing` renamed to `🐙 GitHub Copilot`) — the pricing nav button now leads to a dedicated GitHub Copilot view showing: GitHub connect/disconnect widget, budget alert banners, summary cards (AI credits, tokens this month/last month), model pricing breakdown table, AI credits summary table, and the model pricing reference. Dashboard no longer shows these Copilot-specific tables inline.
+
+### Changed
+
+- **Dashboard simplified** — removed the GitHub Copilot model breakdown table and AI credits summary table from the main dashboard. These now live exclusively on the GitHub Copilot screen.
+- **Usage Analysis → Tools & MCP tab** — removed the generic "🔧 Tool Usage" subsection; only the MCP Tools table is shown.
+- **Usage Analysis → Cost & Impact tab** — removed the "📁 Repository Cost Attribution" section; repository cost data now appears in the dashboard's "📁 Usage by Repository (This Month)" box (with Cost and Share columns).
+
 ## [Unreleased] - 2026-05-10
 
 ### Added

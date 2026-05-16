@@ -5,16 +5,25 @@ import * as vscode from 'vscode';
 import { AggregatedMetrics } from '../types';
 
 export class ChartsProvider {
-  static createPanel(context: vscode.ExtensionContext, metrics: AggregatedMetrics): vscode.WebviewPanel {
+  private static currentPanel: vscode.WebviewPanel | undefined;
+
+  static createPanel(context: vscode.ExtensionContext, metrics: AggregatedMetrics, refreshing = false): vscode.WebviewPanel {
+    if (ChartsProvider.currentPanel) {
+      ChartsProvider.currentPanel.webview.html = ChartsProvider.getHtml(metrics, refreshing);
+      ChartsProvider.currentPanel.reveal(vscode.ViewColumn.One);
+      return ChartsProvider.currentPanel;
+    }
     const panel = vscode.window.createWebviewPanel(
       'aiInsights.charts', 'AI Insights Charts', vscode.ViewColumn.One,
       { enableScripts: true, retainContextWhenHidden: true },
     );
-    panel.webview.html = ChartsProvider.getHtml(metrics);
+    panel.webview.html = ChartsProvider.getHtml(metrics, refreshing);
+    panel.onDidDispose(() => { ChartsProvider.currentPanel = undefined; }, null, context.subscriptions);
+    ChartsProvider.currentPanel = panel;
     return panel;
   }
 
-  static getHtml(m: AggregatedMetrics): string {
+  static getHtml(m: AggregatedMetrics, refreshing = false): string {
     // Filter to last 30 days for chart data
     const now = new Date();
     const cutoff = new Date(now); cutoff.setDate(cutoff.getDate() - 30);
@@ -77,7 +86,6 @@ export class ChartsProvider {
 <html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AI Insights Charts</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap');
   :root {
@@ -103,8 +111,15 @@ export class ChartsProvider {
   .summary-value { font-size:2em; font-weight:500; color:var(--text-primary); margin-top:8px; }
   .summary-label { font-size:0.75em; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.05em; font-weight:500; }
   .hidden { display:none; }
+  .loading-bar{position:fixed;top:0;left:0;right:0;z-index:100;height:3px;background:rgba(0,122,255,0.15);overflow:hidden;}
+  .loading-bar-fill{height:100%;width:40%;background:var(--primary);border-radius:0 2px 2px 0;animation:loadslide 1.4s ease-in-out infinite;}
+  @keyframes loadslide{0%{transform:translateX(-100%)}60%{transform:translateX(280%)}100%{transform:translateX(280%)}}
+  .loading-banner{background:rgba(0,122,255,0.08);border-bottom:1px solid rgba(0,122,255,0.2);padding:8px 32px;font-size:0.82em;color:#6db3ff;display:flex;align-items:center;gap:8px;}
+  .loading-spinner{width:12px;height:12px;border:2px solid rgba(0,122,255,0.3);border-top-color:var(--primary);border-radius:50%;animation:spin 0.7s linear infinite;flex-shrink:0;}
+  @keyframes spin{to{transform:rotate(360deg)}}
 </style></head>
 <body>
+  ${refreshing ? '<div class="loading-bar"><div class="loading-bar-fill"></div></div><div class="loading-banner"><div class="loading-spinner"></div>Refreshing charts…</div>' : ''}
   <h1>📊 Token Usage - Last 30 Days</h1>
   <div class="summary">
     <div class="summary-item">
@@ -153,6 +168,7 @@ export class ChartsProvider {
     <div class="chart-wrap"><canvas id="repositoryChart"></canvas></div>
   </div>
 
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script>
   Chart.defaults.font.family = "'Inter', system-ui, sans-serif";
   Chart.defaults.color = "#c1c6d7";

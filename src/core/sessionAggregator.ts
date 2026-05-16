@@ -53,6 +53,8 @@ export function aggregateSessions(sessions: Session[], config: AggregationConfig
   const yesterdaySessions = sliceSessionsByDateRange(sessions, yesterdayStart, todayStart);
   const currentMonthSessions = sliceSessionsByDateRange(sessions, currentMonthStart, tomorrowStart);
   const lastMonthSessions = sliceSessionsByDateRange(sessions, lastMonthStart, new Date(lastMonthEnd.getTime() + 1));
+  const thisYearStart = new Date(now.getFullYear(), 0, 1);
+  const thisYearSessions = sliceSessionsByDateRange(sessions, thisYearStart, tomorrowStart);
 
   const byProvider: Record<ProviderId, ProviderMetrics> = {
     copilot: buildMetrics(sessions.filter(s => s.provider === 'copilot')),
@@ -84,12 +86,21 @@ export function aggregateSessions(sessions: Session[], config: AggregationConfig
     claudeCode: buildMetrics(lastMonthSessions.filter(s => s.provider === 'claudeCode')),
     codex: buildMetrics(lastMonthSessions.filter(s => s.provider === 'codex')),
   };
+  const thisYearByProvider: Record<ProviderId, ProviderMetrics> = {
+    copilot: buildMetrics(thisYearSessions.filter(s => s.provider === 'copilot')),
+    antigravity: buildMetrics(thisYearSessions.filter(s => s.provider === 'antigravity')),
+    claudeCode: buildMetrics(thisYearSessions.filter(s => s.provider === 'claudeCode')),
+    codex: buildMetrics(thisYearSessions.filter(s => s.provider === 'codex')),
+  };
+  const allTimeByProvider: Record<ProviderId, ProviderMetrics> = byProvider;
 
   const daily = buildDailyUsage(sessions);
   const todayMetrics = buildMetrics(todaySessions);
   const yesterdayMetrics = buildMetrics(yesterdaySessions);
   const currentMonthMetrics = buildMetrics(currentMonthSessions);
   const lastMonthMetrics = buildMetrics(lastMonthSessions);
+  const thisYearMetrics = buildMetrics(thisYearSessions);
+  const allTimeMetrics = buildMetrics(sessions);
   const currentMonthCopilotMetrics = currentMonthByProvider.copilot;
 
   // Project yearly from current month (extrapolate daily rate × 365)
@@ -98,6 +109,11 @@ export function aggregateSessions(sessions: Session[], config: AggregationConfig
   const projectedYear: ProviderMetrics = {
     ...currentMonthMetrics,
     totalTokens: Math.round(currentMonthMetrics.totalTokens * yearMultiplier),
+    inputTokens: Math.round(currentMonthMetrics.inputTokens * yearMultiplier),
+    outputTokens: Math.round(currentMonthMetrics.outputTokens * yearMultiplier),
+    thinkingTokens: Math.round(currentMonthMetrics.thinkingTokens * yearMultiplier),
+    cacheReadTokens: Math.round(currentMonthMetrics.cacheReadTokens * yearMultiplier),
+    cacheWriteTokens: Math.round(currentMonthMetrics.cacheWriteTokens * yearMultiplier),
     sessions: Math.round(currentMonthMetrics.sessions * yearMultiplier),
     interactions: Math.round(currentMonthMetrics.interactions * yearMultiplier),
     estimatedCost: currentMonthMetrics.estimatedCost * yearMultiplier,
@@ -107,7 +123,7 @@ export function aggregateSessions(sessions: Session[], config: AggregationConfig
   };
 
   const budget = computeBudgetMetrics(now, currentMonthCopilotMetrics, config);
-  const cache = computeCacheMetrics(currentMonthCopilotMetrics);
+  const cache = computeCacheMetrics(currentMonthMetrics);
   const roi = computeROIMetrics(currentMonthMetrics, byProvider);
   const anomaly = computeAnomalyFlags(now, sessions, daily, config);
   const sessionComplexity = computeSessionComplexity(sessions, config);
@@ -117,12 +133,16 @@ export function aggregateSessions(sessions: Session[], config: AggregationConfig
     yesterday: yesterdayMetrics,
     currentMonth: currentMonthMetrics,
     lastMonth: lastMonthMetrics,
+    thisYear: thisYearMetrics,
+    allTime: allTimeMetrics,
     projectedYear,
     byProvider,
     todayByProvider,
     yesterdayByProvider,
     currentMonthByProvider,
     lastMonthByProvider,
+    thisYearByProvider,
+    allTimeByProvider,
     daily,
     budget,
     cache,

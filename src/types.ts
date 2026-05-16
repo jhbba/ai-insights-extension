@@ -225,12 +225,16 @@ export interface AggregatedMetrics {
   yesterday: ProviderMetrics;
   currentMonth: ProviderMetrics;
   lastMonth: ProviderMetrics;
+  thisYear: ProviderMetrics;
+  allTime: ProviderMetrics;
   projectedYear: ProviderMetrics;
   byProvider: Record<ProviderId, ProviderMetrics>;
   todayByProvider: Record<ProviderId, ProviderMetrics>;
   yesterdayByProvider: Record<ProviderId, ProviderMetrics>;
   currentMonthByProvider: Record<ProviderId, ProviderMetrics>;
   lastMonthByProvider: Record<ProviderId, ProviderMetrics>;
+  thisYearByProvider: Record<ProviderId, ProviderMetrics>;
+  allTimeByProvider: Record<ProviderId, ProviderMetrics>;
   daily: DailyUsage[];
   budget: BudgetMetrics;
   cache: CacheMetrics;

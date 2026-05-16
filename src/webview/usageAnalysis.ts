@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
 import { AggregatedMetrics, RepositoryHygieneReport, FileStatus, AcceptanceMetrics } from '../types';
 import { providerIcon } from './providerIcons';
+import { navCss, navTopbarHtml, navPagebarHtml, navJs, NAV_COMMANDS } from './navShared';
 
-const KNOWN_AUTO_TOOLS = new Set(['Read', 'Bash', 'Grep', 'LS', 'Glob', 'Cat']);
 
 const MODE_META: Record<string, { label: string; icon: string }> = {
   ask: { label: 'Ask Mode', icon: '💬' },
@@ -72,27 +72,6 @@ function buildModeTable(modeBreakdown: Record<string, number>): string {
   </table>`;
 }
 
-function buildToolTable(toolCalls: Record<string, number>, regularOnly: boolean): string {
-  const entries = Object.entries(toolCalls)
-    .filter(([name]) => regularOnly ? !isMcpTool(name) : isMcpTool(name))
-    .sort(([, a], [, b]) => b - a);
-  if (entries.length === 0) {
-    return '<p style="color:var(--text-secondary);padding:16px 0;">No data for this period.</p>';
-  }
-  const total = entries.reduce((s, [, c]) => s + c, 0);
-  const rows = entries.map(([name, count], i) => {
-    const auto = KNOWN_AUTO_TOOLS.has(name)
-      ? `<span style="font-size:0.75em;background:rgba(0,122,255,0.15);color:var(--primary);border-radius:3px;padding:1px 5px;margin-left:6px;">auto</span>` : '';
-    return `<tr>
-      <td style="color:var(--text-secondary);width:32px;">${i + 1}</td>
-      <td><strong>${name}</strong>${auto}</td>
-      <td class="data-text" style="text-align:right;">${count.toLocaleString()}</td>
-    </tr>`;
-  }).join('');
-  return `<p style="font-size:0.85em;color:var(--text-secondary);margin-bottom:12px;">Total: <strong style="color:var(--text-primary);">${total.toLocaleString()}</strong></p>
-  <table><thead><tr><th>#</th><th>Tool</th><th style="text-align:right;">Calls</th></tr></thead>
-  <tbody>${rows}</tbody></table>`;
-}
 
 function buildMcpServerTable(toolCalls: Record<string, number>): string {
   const serverMap = new Map<string, number>();
@@ -234,26 +213,9 @@ function buildHygieneScoreTable(reports: RepositoryHygieneReport[]): string {
 }
 
 function buildCostIntelligenceTab(m: AggregatedMetrics, roiConfig: RoiConfig): string {
-  const b = m.budget;
   const roi = m.roi;
   const sc = m.sessionComplexity;
   const anomaly = m.anomaly;
-  const cache = m.cache;
-
-  // Budget forecast table
-  const planLabel = b.planBudget === 10 ? 'Copilot Pro ($10)' :
-    b.planBudget === 19 ? 'Copilot Business ($19)' :
-      b.planBudget === 39 ? 'Copilot Pro+ / Enterprise ($39)' :
-        `Custom ($${b.planBudget.toFixed(2)})`;
-
-  const exhaustedText = b.daysUntilExhausted !== null
-    ? `${Math.ceil(b.daysUntilExhausted)} days`
-    : 'Will last the month';
-
-  const projOverage = b.projectedMonthEnd > b.planBudget;
-  const overageAmt = projOverage ? b.projectedMonthEnd - b.planBudget : 0;
-  const budgetPct = Math.min(200, b.budgetUtilizationPct);
-  const budgetBarColor = budgetPct >= 95 ? '#FF4D4D' : budgetPct >= 80 ? '#f9e2af' : '#39FF14';
 
   // Anomaly section
   let anomalyBadges = '';
@@ -295,103 +257,10 @@ function buildCostIntelligenceTab(m: AggregatedMetrics, roiConfig: RoiConfig): s
       </tr>`;
     }).join('');
 
-  // Repo cost rows
-  const repoCostRows = Object.entries(m.currentMonth.costByRepository)
-    .sort(([, a], [, b]) => b - a)
-    .slice(0, 6)
-    .map(([repo, cost]) => {
-      const tokens = m.currentMonth.repositories[repo] || 0;
-      const pct = m.currentMonth.estimatedCost > 0
-        ? Math.round((cost / m.currentMonth.estimatedCost) * 100) : 0;
-      return `<tr>
-        <td>${repo}</td>
-        <td class="data-text" style="text-align:right;">${fmt(tokens)}</td>
-        <td class="data-text" style="text-align:right;">${fmtCost(cost)}</td>
-        <td style="width:100px;padding-right:12px;">
-          <div style="background:var(--bg-base);border-radius:2px;height:4px;overflow:hidden;">
-            <div style="background:var(--primary);width:${pct}%;height:100%;"></div>
-          </div>
-          <span style="font-size:0.75em;color:var(--text-secondary);">${pct}%</span>
-        </td>
-      </tr>`;
-    }).join('');
-
   // Session complexity stats
   const highestCostSess = sc.highestCostSession;
 
   return `
-  <!-- Budget & Forecast ─────────────────────────────────── -->
-  <div class="section">
-	    <h2>💳 GitHub Copilot Budget Health &amp; Forecast</h2>
-	    <p class="subtitle">Copilot plan: ${planLabel} · ${b.daysElapsed} of ${b.daysInMonth} days elapsed</p>
-
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:20px;">
-	      <div class="mini-card"><div class="mini-label">Copilot MTD Spend ${tip('Month-to-date estimated cost based on token usage and provider model pricing.')}</div><div class="mini-val data-text">${fmtCost(b.mtdSpend)}</div></div>
-	      <div class="mini-card"><div class="mini-label">Copilot Budget Left ${tip('Remaining budget = plan budget minus MTD spend. Turns red below 20%.')}</div><div class="mini-val data-text" style="color:${budgetBarColor}">${fmtCost(b.creditsRemaining)}</div></div>
-      <div class="mini-card"><div class="mini-label">Daily Burn Rate ${tip('Average daily cost = MTD spend ÷ days elapsed this month.')}</div><div class="mini-val data-text">${fmtCost(b.dailyBurnRate)}/day</div></div>
-      <div class="mini-card"><div class="mini-label">Days Until Exhausted ${tip('Estimated days before the plan budget runs out at the current daily burn rate.')}</div><div class="mini-val data-text">${exhaustedText}</div></div>
-      <div class="mini-card"><div class="mini-label">Projected Month-End ${tip('Estimated total cost by end of month = daily burn rate × days in month. Red if it exceeds the plan budget.')}</div><div class="mini-val data-text" style="color:${projOverage ? '#FF4D4D' : '#39FF14'}">${fmtCost(b.projectedMonthEnd)}</div></div>
-      <div class="mini-card"><div class="mini-label">Overage Risk ${tip('Projected month-end spend as a % of your plan budget. Above 100% means an overspend is expected.')}</div><div class="mini-val data-text" style="color:${budgetBarColor}">${Math.min(200, Math.round(b.overageRiskScore))}%</div></div>
-    </div>
-
-    ${projOverage ? `<div style="background:rgba(255,77,77,0.08);border:1px solid rgba(255,77,77,0.25);border-radius:6px;padding:10px 14px;font-size:0.85em;color:#ff8a8a;margin-bottom:16px;">
-	      🚨 On current Copilot trajectory, you'll overspend by ${fmtCost(overageAmt)} this month.
-    </div>` : ''}
-
-    ${b.teamSize > 1 ? `<div style="font-size:0.85em;color:var(--text-secondary);margin-bottom:16px;">
-      👥 Team multiplier ×${b.teamSize}: projected team cost ${fmtCost(b.teamProjectedCost)} / month
-    </div>` : ''}
-
-    <h3>Projected vs. Plan</h3>
-    <div style="background:var(--bg-surface-high);border-radius:4px;padding:12px;margin-top:8px;">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-        <span style="font-size:0.85em;color:var(--text-secondary);min-width:80px;">MTD Spend</span>
-        <div style="flex:1;background:var(--bg-base);border-radius:4px;height:6px;overflow:hidden;">
-          <div style="background:${budgetBarColor};width:${Math.min(100, budgetPct)}%;height:100%;"></div>
-        </div>
-        <span class="data-text" style="font-size:0.85em;min-width:50px;">${Math.round(budgetPct)}%</span>
-      </div>
-      <div style="display:flex;align-items:center;gap:8px;">
-        <span style="font-size:0.85em;color:var(--text-secondary);min-width:80px;">Projected</span>
-        <div style="flex:1;background:var(--bg-base);border-radius:4px;height:6px;overflow:hidden;">
-          <div style="background:${projOverage ? '#FF4D4D' : '#007AFF'};width:${Math.min(100, b.overageRiskScore)}%;height:100%;"></div>
-        </div>
-        <span class="data-text" style="font-size:0.85em;min-width:50px;">${Math.min(200, Math.round(b.overageRiskScore))}%</span>
-      </div>
-    </div>
-  </div>
-
-  <!-- Cache Efficiency ───────────────────────────────────── -->
-  <div class="section">
-    <h2>⚡ GitHub Copilot Cache Efficiency</h2>
-    <p class="subtitle">Copilot cached input is priced separately from fresh input in GitHub's model pricing table</p>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:16px;">
-      <div class="mini-card">
-        <div class="mini-label">Cache Hit Rate ${tip('Proportion of input tokens served from cache vs. total input. Higher = cheaper and faster responses.')}</div>
-        <div class="mini-val data-text" style="color:${cache.cacheHitRate >= 0.3 ? '#39FF14' : cache.cacheHitRate >= 0.1 ? '#f9e2af' : 'var(--text-secondary)'}">
-          ${Math.round(cache.cacheHitRate * 100)}%
-        </div>
-      </div>
-      <div class="mini-card">
-        <div class="mini-label">Cache Savings (MTD) ${tip('Estimated dollar savings from cache hits this month - cached tokens are billed at a lower rate.')}</div>
-        <div class="mini-val data-text" style="color:#39FF14">${fmtCost(cache.cacheSavingsUsd)}</div>
-      </div>
-      <div class="mini-card">
-        <div class="mini-label">Cache Read Tokens ${tip('Tokens served from the prompt cache (billed at a reduced read rate).')}</div>
-        <div class="mini-val data-text">${fmt(cache.totalCacheReadTokens)}</div>
-      </div>
-      <div class="mini-card">
-        <div class="mini-label">Cache Write Tokens ${tip('Tokens written into the prompt cache (billed at a write rate, then read cheaply later).')}</div>
-        <div class="mini-val data-text">${fmt(cache.totalCacheWriteTokens)}</div>
-      </div>
-      <div class="mini-card">
-        <div class="mini-label">Read/Write Ratio ${tip('How many times each cached token is reused on average. Higher = better cache ROI.')}</div>
-        <div class="mini-val data-text">${cache.cacheWriteReadRatio.toFixed(1)}×</div>
-      </div>
-    </div>
-    ${cache.cacheHitRate < 0.1 && cache.totalCacheWriteTokens === 0 ? `<p style="font-size:0.85em;color:var(--text-secondary);">ℹ️ No cache data detected. Prompt caching is available for Claude and GPT-4o - see provider docs to enable it.</p>` : ''}
-  </div>
-
   <!-- Developer Impact ───────────────────────────────────── -->
   <div class="section">
     <h2>⏱ Developer Impact (This Month)</h2>
@@ -529,20 +398,7 @@ function buildCostIntelligenceTab(m: AggregatedMetrics, roiConfig: RoiConfig): s
     </div>` : ''}
   </div>
 
-  <!-- Repository Cost Attribution ────────────────────────── -->
-  <div class="section">
-    <h2>📁 Repository Cost Attribution (This Month)</h2>
-    <p class="subtitle">Estimated token cost broken down by workspace / project</p>
-    <table>
-      <thead><tr>
-        <th>Repository</th>
-        <th style="text-align:right;">Tokens</th>
-        <th style="text-align:right;">Cost</th>
-        <th>Share</th>
-      </tr></thead>
-      <tbody>${repoCostRows || '<tr><td colspan="4" style="color:var(--text-secondary);">No repository data</td></tr>'}</tbody>
-    </table>
-  </div>`;
+  `;
 }
 
 function buildAcceptanceSection(a: AcceptanceMetrics): string {
@@ -597,18 +453,15 @@ function buildAcceptanceSection(a: AcceptanceMetrics): string {
 
 interface RoiConfig { hourlyRate: number; tokensPerHourSaved: number; }
 
-function getHtml(m: AggregatedMetrics, reports: RepositoryHygieneReport[], acceptance: AcceptanceMetrics, roiConfig: RoiConfig): string {
-  const mcpTotalToday = Object.entries(m.today.toolCalls)
-    .filter(([n]) => isMcpTool(n)).reduce((s, [, c]) => s + c, 0);
-  const mcpTotalLast30 = Object.entries(m.currentMonth.toolCalls)
-    .filter(([n]) => isMcpTool(n)).reduce((s, [, c]) => s + c, 0);
+function getHtml(_m: AggregatedMetrics, reports: RepositoryHygieneReport[], _acceptance: AcceptanceMetrics, _roiConfig: RoiConfig, refreshing = false, logoUri = ''): string {
+  const knownReports = reports.filter(r => r.repoPath && r.repoPath !== 'Path unresolved');
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AI Insights - Usage Analysis</title>
+<title>AI Insights - Workspace Analysis</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap');
   :root {
@@ -621,18 +474,13 @@ function getHtml(m: AggregatedMetrics, reports: RepositoryHygieneReport[], accep
     --font-data: 'Space Grotesk', monospace;
   }
   * { margin:0; padding:0; box-sizing:border-box; }
-  body { font-family:var(--font-primary); background:var(--bg-base); color:var(--text-primary); padding:32px; line-height:1.6; }
+  body { font-family:var(--font-primary); background:var(--bg-base); color:var(--text-primary); padding:0; line-height:1.6; }
   .data-text { font-family:var(--font-data); }
-  .header { display:flex; align-items:center; gap:16px; margin-bottom:24px; padding-bottom:16px; border-bottom:1px solid var(--border); }
-  .header h1 { font-size:2em; font-weight:600; letter-spacing:-0.02em; }
-  .nav { display:flex; gap:8px; margin-left:auto; align-items:center; }
+  ${navCss()}
   .btn { background:transparent; border:1px solid var(--border); color:var(--text-primary); padding:8px 16px; border-radius:4px; cursor:pointer; font-size:0.85em; font-weight:500; transition:all 0.2s; }
   .btn:hover { background:rgba(255,255,255,0.05); }
-  .btn-primary { background:var(--primary); color:white; border:none; box-shadow:0 0 15px var(--primary-glow); }
-  .btn.active { background:var(--primary); color:white; border-color:var(--primary); }
-  .tab-bar { display:flex; gap:4px; margin-bottom:28px; border-bottom:1px solid var(--border); padding-bottom:12px; flex-wrap:wrap; }
-  .tab-panel { display:none; }
-  .tab-panel.active { display:block; }
+  .btn.is-loading { opacity:0.7; pointer-events:none; }
+  .btn.is-loading::after { content:""; display:inline-block; width:10px; height:10px; border:2px solid rgba(255,255,255,0.3); border-top-color:white; border-radius:50%; animation:spin 0.7s linear infinite; margin-left:6px; vertical-align:middle; }
   .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:16px; margin-bottom:32px; }
   .card { background:var(--bg-surface); border:1px solid var(--border); border-radius:4px; padding:20px; transition:transform 0.2s; }
   .card:hover { transform:translateY(-2px); box-shadow:0 4px 20px rgba(0,0,0,0.5); }
@@ -650,117 +498,56 @@ function getHtml(m: AggregatedMetrics, reports: RepositoryHygieneReport[], accep
   .mini-card { background:var(--bg-surface-high); border-radius:4px; padding:14px; }
   .mini-label { font-size:0.72em; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:6px; font-weight:500; }
   .mini-val { font-size:1.3em; font-weight:600; color:var(--text-primary); }
+  .loading-bar{position:fixed;top:0;left:0;right:0;z-index:100;height:3px;background:rgba(0,122,255,0.15);overflow:hidden;}
+  .loading-bar-fill{height:100%;width:40%;background:var(--primary);border-radius:0 2px 2px 0;animation:loadslide 1.4s ease-in-out infinite;}
+  @keyframes loadslide{0%{transform:translateX(-100%)}60%{transform:translateX(280%)}100%{transform:translateX(280%)}}
+  .loading-banner{background:rgba(0,122,255,0.08);border-bottom:1px solid rgba(0,122,255,0.2);padding:8px 32px;font-size:0.82em;color:#6db3ff;display:flex;align-items:center;gap:8px;}
+  .loading-spinner{width:12px;height:12px;border:2px solid rgba(0,122,255,0.3);border-top-color:var(--primary);border-radius:50%;animation:spin 0.7s linear infinite;flex-shrink:0;}
+  @keyframes spin{to{transform:rotate(360deg)}}
 </style>
 </head>
 <body>
-
-<div class="header">
-  <h1>📊 Usage Analysis</h1>
-  <div class="nav">
-    <button class="btn btn-primary" onclick="window.vsc.postMessage({command:'refresh'})">🔄 Refresh</button>
-    <button class="btn" onclick="window.vsc.postMessage({command:'showDashboard'})">🧠 Dashboard</button>
-  </div>
-</div>
-
-<div class="tab-bar">
-  <button class="btn active" data-tab="activity">📈 My Activity</button>
-  <button class="btn" data-tab="quality">🎯 Quality</button>
-  <button class="btn" data-tab="tools">🔧 Tools &amp; MCP</button>
-  <button class="btn" data-tab="cost">💰 Cost &amp; Impact</button>
-  <button class="btn" data-tab="health">🏥 Workspace Health</button>
-</div>
-
-<!-- ═══════════════ MY ACTIVITY ═══════════════ -->
-<div id="tab-activity" class="tab-panel active">
-  <div class="cards">
-    <div class="card">
-      <div class="card-label">📅 Today Sessions</div>
-      <div class="card-value data-text">${m.today.sessions}</div>
-    </div>
-    <div class="card">
-      <div class="card-label">📆 This Month Sessions</div>
-      <div class="card-value data-text">${m.currentMonth.sessions}</div>
-    </div>
-    <div class="card">
-      <div class="card-label">🗓 Last Month Sessions</div>
-      <div class="card-value data-text">${m.lastMonth.sessions}</div>
-    </div>
-  </div>
-  <div class="section">
-    <h2>🎯 Interaction Modes</h2>
-    <p class="subtitle">How you're using AI tools: Ask (chat), Edit (code edits), Agent (autonomous tasks), or CLI</p>
-    <h3>📅 Today</h3>
-    ${buildModeTable(m.today.modeBreakdown)}
-    <h3>📆 This Month</h3>
-    ${buildModeTable(m.currentMonth.modeBreakdown)}
-  </div>
-</div>
-
-
-
-<!-- ═══════════════ QUALITY ═══════════════ -->
-<div id="tab-quality" class="tab-panel">
-  ${buildAcceptanceSection(acceptance)}
-</div>
-
-<!-- ═══════════════ TOOLS & MCP ═══════════════ -->
-<div id="tab-tools" class="tab-panel">
-  <div class="section">
-    <h2>🔧 Tool Usage</h2>
-    <p class="subtitle">Functions and tools invoked during interactions</p>
-    <h3>📅 Today</h3>
-    ${buildToolTable(m.today.toolCalls, true)}
-    <h3>📆 This Month</h3>
-    ${buildToolTable(m.currentMonth.toolCalls, true)}
-  </div>
-  <div class="section">
-    <h2>🔌 MCP Tools</h2>
-    <p class="subtitle">Model Context Protocol server and tool usage</p>
-    <div style="margin-bottom:16px;">${buildMcpChips(m.currentMonth.toolCalls)}</div>
-    <h3>📅 Today - by Server</h3>
-    <p style="font-size:0.85em;color:var(--text-secondary);margin-bottom:12px;">Total MCP Calls: <strong style="color:var(--text-primary);">${mcpTotalToday.toLocaleString()}</strong></p>
-    <table><thead><tr><th>#</th><th>Server</th><th style="text-align:right;">Calls</th></tr></thead>
-    <tbody>${buildMcpServerTable(m.today.toolCalls)}</tbody></table>
-    <h3>📆 This Month - by Server</h3>
-    <p style="font-size:0.85em;color:var(--text-secondary);margin-bottom:12px;">Total MCP Calls: <strong style="color:var(--text-primary);">${mcpTotalLast30.toLocaleString()}</strong></p>
-    <table><thead><tr><th>#</th><th>Server</th><th style="text-align:right;">Calls</th></tr></thead>
-    <tbody>${buildMcpServerTable(m.currentMonth.toolCalls)}</tbody></table>
-  </div>
-</div>
-
-<!-- ═══════════════ COST & IMPACT ═══════════════ -->
-<div id="tab-cost" class="tab-panel">
-  ${buildCostIntelligenceTab(m, roiConfig)}
-</div>
-
-<!-- ═══════════════ WORKSPACE HEALTH ═══════════════ -->
-<div id="tab-health" class="tab-panel">
+  ${navTopbarHtml(logoUri, true, refreshing)}
+  ${refreshing ? '<div class="loading-bar"><div class="loading-bar-fill"></div></div><div class="loading-banner"><div class="loading-spinner"></div>Loading workspace analysis…</div>' : ''}
+  ${navPagebarHtml('usage', 'Workspace Analysis')}
+<div class="ns-content">
   <div class="section">
     <h2>⚙️ AI Configuration Files</h2>
     <p class="subtitle">Workspaces with AI tool activity this month - configuration file presence</p>
-    ${buildHygieneTable(reports)}
+    ${buildHygieneTable(knownReports)}
   </div>
   <div class="section">
     <h2>📝 Instruction Content Quality</h2>
     <p class="subtitle">Word count and structure of each AI instruction file found (CLAUDE.md, copilot-instructions.md, AGENTS.md, .cursorrules, .clinerules)</p>
-    ${buildInstructionQualitySection(reports)}
+    ${buildInstructionQualitySection(knownReports)}
   </div>
   <div class="section">
     <h2>🔍 Repository Hygiene Analysis</h2>
     <p class="subtitle">Configuration completeness score per repository (5 categories × 20 pts - fresh=20, stale=10, missing=0)</p>
-    ${buildHygieneScoreTable(reports)}
+    ${buildHygieneScoreTable(knownReports)}
   </div>
-</div>
+</div><!-- /ns-content -->
 
 <script>
   window.vsc = acquireVsCodeApi();
-  document.querySelectorAll('[data-tab]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const tab = btn.dataset.tab;
-      document.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('active', b === btn));
-      document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === 'tab-' + tab));
-    });
+  window.vscode = window.vsc;
+  document.addEventListener('visibilitychange', function() {
+    if (document.visibilityState === 'visible') {
+      document.querySelectorAll('.is-loading').forEach(function(el) { el.classList.remove('is-loading'); });
+      var r = document.getElementById('btnRefresh'); if (r) r.textContent = '↺ Refresh';
+    }
   });
+  (function() {
+    var rb = document.getElementById('btnRefresh');
+    if (rb) {
+      rb.addEventListener('click', function() {
+        rb.classList.add('is-loading'); rb.textContent = '⟳ Refreshing…';
+        window.vscode.postMessage({ command: 'refresh' });
+        setTimeout(function() { rb.classList.remove('is-loading'); rb.textContent = '↺ Refresh'; }, 5000);
+      });
+    }
+  })();
+  ${navJs()}
 </script>
 </body>
 </html>`;
@@ -776,31 +563,37 @@ export class UsageAnalysisProvider {
     reports: RepositoryHygieneReport[],
     acceptance: AcceptanceMetrics,
     roiConfig: RoiConfig = { hourlyRate: 75, tokensPerHourSaved: 3000 },
+    refreshing = false,
   ): void {
+    const logoPath = vscode.Uri.joinPath(context.extensionUri, 'assets', 'logo.png');
+
     if (UsageAnalysisProvider.currentPanel) {
-      UsageAnalysisProvider.currentPanel.webview.html = getHtml(metrics, reports, acceptance, roiConfig);
+      const logoUri = UsageAnalysisProvider.currentPanel.webview.asWebviewUri(logoPath).toString();
+      UsageAnalysisProvider.currentPanel.webview.html = getHtml(metrics, reports, acceptance, roiConfig, refreshing, logoUri);
       UsageAnalysisProvider.currentPanel.reveal(vscode.ViewColumn.One);
       return;
     }
 
     const panel = vscode.window.createWebviewPanel(
       UsageAnalysisProvider.viewType,
-      'AI Insights - Usage Analysis',
+      'AI Insights - Workspace Analysis',
       vscode.ViewColumn.One,
-      { enableScripts: true, retainContextWhenHidden: true },
+      {
+        enableScripts: true,
+        retainContextWhenHidden: true,
+        localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'assets')],
+      },
     );
-    panel.webview.html = getHtml(metrics, reports, acceptance, roiConfig);
+    const logoUri = panel.webview.asWebviewUri(logoPath).toString();
+    panel.webview.html = getHtml(metrics, reports, acceptance, roiConfig, refreshing, logoUri);
 
     panel.webview.onDidReceiveMessage(msg => {
-      switch (msg.command) {
-        case 'refresh':
-          vscode.commands.executeCommand('aiInsights.refresh').then(() => {
-            vscode.commands.executeCommand('aiInsights.showUsageAnalysis');
-          });
-          break;
-        case 'showDashboard':
-          vscode.commands.executeCommand('aiInsights.showDashboard');
-          break;
+      const cmd = NAV_COMMANDS[msg.command];
+      if (cmd) { vscode.commands.executeCommand(cmd); return; }
+      if (msg.command === 'refresh') {
+        vscode.commands.executeCommand('aiInsights.refresh').then(() => {
+          vscode.commands.executeCommand('aiInsights.showUsageAnalysis');
+        });
       }
     }, undefined, context.subscriptions);
 

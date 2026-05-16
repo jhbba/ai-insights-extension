@@ -25,6 +25,7 @@ import { Session, AggregatedMetrics, AggregationConfig, AlertThresholds } from '
 import { ConnectedGitHubUser, connectGitHubAndDetectPlan } from './core/githubAuth';
 import { PromptHistoryStore } from './core/promptHistory';
 import { PromptHistoryViewProvider } from './webview/promptHistoryView';
+import { TokenCalculatorProvider } from './webview/tokenCalculator';
 
 let statusBarItem: vscode.StatusBarItem;
 let refreshTimer: NodeJS.Timeout | undefined;
@@ -64,6 +65,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('aiInsights.connectGitHub', () => handleConnectGitHub(context)),
     vscode.commands.registerCommand('aiInsights.disconnectGitHub', () => handleDisconnectGitHub(context)),
     vscode.commands.registerCommand('aiInsights.showPromptHistory', () => showPromptHistory(context)),
+    vscode.commands.registerCommand('aiInsights.showTokenCalculator', () => TokenCalculatorProvider.createPanel(context)),
   );
 
   refresh(providers);
@@ -283,11 +285,13 @@ function getProviderDisplayName(id: string): string {
 
 async function showDashboard(context: vscode.ExtensionContext) {
   if (!latestMetrics) {
-    vscode.window.showInformationMessage('AI Insights: No data yet. Refreshing...');
+    DashboardProvider.showLoadingPanel(context);
     await refresh(getEnabledProviders());
   }
   if (latestMetrics) {
-    DashboardProvider.createPanel(context, latestMetrics, connectedGitHubUser);
+    const cfg = vscode.workspace.getConfiguration('aiInsights');
+    const roiCfg = { hourlyRate: cfg.get<number>('roi.developerHourlyRate', 75), tokensPerHourSaved: cfg.get<number>('roi.outputTokensPerHourSaved', 3000) };
+    DashboardProvider.createPanel(context, latestMetrics, connectedGitHubUser, false, [], roiCfg, acceptanceTracker.getStats());
   }
 }
 
@@ -309,10 +313,11 @@ async function handleDisconnectGitHub(context: vscode.ExtensionContext) {
 }
 
 async function showCharts(context: vscode.ExtensionContext) {
-  if (!latestMetrics) { await refresh(getEnabledProviders()); }
-  if (latestMetrics) {
-    ChartsProvider.createPanel(context, latestMetrics);
+  if (!latestMetrics) {
+    ChartsProvider.createPanel(context, null as any, true);
+    await refresh(getEnabledProviders());
   }
+  if (latestMetrics) { ChartsProvider.createPanel(context, latestMetrics); }
 }
 
 async function showDiagnostics(context: vscode.ExtensionContext, providers: BaseProvider[]) {
@@ -325,39 +330,39 @@ async function showDiagnostics(context: vscode.ExtensionContext, providers: Base
 }
 
 async function showUsageAnalysis(context: vscode.ExtensionContext) {
-  if (!latestMetrics) {
-    vscode.window.showInformationMessage('AI Insights: Loading data...');
-    await refresh(getEnabledProviders());
-  }
-  if (!latestMetrics) { return; }
-
   const wsFolders = vscode.workspace.workspaceFolders?.map(f => ({
     name: f.name,
     uri: { fsPath: f.uri.fsPath },
   })) ?? [];
-
-  const reports = buildHygieneReports(allSessions, wsFolders);
   const roiCfg = vscode.workspace.getConfiguration('aiInsights');
   const roiConfig = {
     hourlyRate: roiCfg.get<number>('roi.developerHourlyRate', 75),
     tokensPerHourSaved: roiCfg.get<number>('roi.outputTokensPerHourSaved', 3000),
   };
-  UsageAnalysisProvider.createPanel(context, latestMetrics, reports, acceptanceTracker.getStats(), roiConfig);
-}
 
-async function showSessionsView(context: vscode.ExtensionContext) {
-  SessionsViewProvider.createPanel(context, allSessions, true);
-  await refresh(getEnabledProviders());
-  SessionsViewProvider.createPanel(context, allSessions);
-}
-
-async function showPromptHistory(context: vscode.ExtensionContext) {
-  if (promptHistoryStore.size === 0) {
+  if (!latestMetrics) {
+    DashboardProvider.showLoadingPanel(context);
     await refresh(getEnabledProviders());
   }
-  PromptHistoryViewProvider.createPanel(context, promptHistoryStore.getAll());
+  if (!latestMetrics) { return; }
+  UsageAnalysisProvider.createPanel(context, latestMetrics, buildHygieneReports(allSessions, wsFolders), acceptanceTracker.getStats(), roiConfig);
 }
 
-function showPricing(context: vscode.ExtensionContext) {
-  PricingViewProvider.createPanel(context);
+function showSessionsView(context: vscode.ExtensionContext) {
+  SessionsViewProvider.createPanel(context, allSessions);
+  refresh(getEnabledProviders()).then(() => {
+    SessionsViewProvider.createPanel(context, allSessions);
+  });
+}
+
+function showPromptHistory(context: vscode.ExtensionContext) {
+  PromptHistoryViewProvider.createPanel(context, promptHistoryStore.getAll());
+  refresh(getEnabledProviders()).then(() => {
+    PromptHistoryViewProvider.createPanel(context, promptHistoryStore.getAll());
+  });
+}
+
+async function showPricing(context: vscode.ExtensionContext) {
+  if (!latestMetrics) { await refresh(getEnabledProviders()); }
+  PricingViewProvider.createPanel(context, latestMetrics ?? undefined, connectedGitHubUser);
 }

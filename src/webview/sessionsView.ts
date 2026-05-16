@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { Session } from '../types';
 import { PROVIDER_ICONS } from './providerIcons';
 import { computeContextRotScore, ContextRotScore } from '../core/contextRot';
+import { navCss, navTopbarHtml, navPagebarHtml, navJs, NAV_COMMANDS } from './navShared';
 
 type SessionRow = {
   id: string;
@@ -32,10 +33,11 @@ export class SessionsViewProvider {
 
   static createPanel(context: vscode.ExtensionContext, sessions: Session[], refreshing = false): vscode.WebviewPanel {
     const rows = SessionsViewProvider.toRows(sessions);
-    const html = SessionsViewProvider.buildHtml(rows, refreshing);
+    const logoPath = vscode.Uri.joinPath(context.extensionUri, 'assets', 'logo.png');
 
     if (SessionsViewProvider.currentPanel) {
-      SessionsViewProvider.currentPanel.webview.html = html;
+      const logoUri = SessionsViewProvider.currentPanel.webview.asWebviewUri(logoPath).toString();
+      SessionsViewProvider.currentPanel.webview.html = SessionsViewProvider.buildHtml(rows, refreshing, logoUri);
       SessionsViewProvider.currentPanel.reveal(vscode.ViewColumn.One);
       return SessionsViewProvider.currentPanel;
     }
@@ -44,17 +46,21 @@ export class SessionsViewProvider {
       SessionsViewProvider.viewType,
       'AI Sessions',
       vscode.ViewColumn.One,
-      { enableScripts: true, retainContextWhenHidden: true }
+      {
+        enableScripts: true,
+        retainContextWhenHidden: true,
+        localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'assets')],
+      }
     );
-
-    panel.webview.html = html;
+    const logoUri = panel.webview.asWebviewUri(logoPath).toString();
+    panel.webview.html = SessionsViewProvider.buildHtml(rows, refreshing, logoUri);
 
     panel.webview.onDidReceiveMessage(
       (message) => {
+        const navCmd = NAV_COMMANDS[message.command];
+        if (navCmd) { vscode.commands.executeCommand(navCmd); return; }
         if (message.command === 'refresh') {
           vscode.commands.executeCommand('aiInsights.showSessionsView');
-        } else if (message.command === 'showDashboard') {
-          vscode.commands.executeCommand('aiInsights.showDashboard');
         } else if (message.command === 'openSession' && message.sourceFile) {
           vscode.workspace.openTextDocument(vscode.Uri.file(message.sourceFile))
             .then(doc => vscode.window.showTextDocument(doc))
@@ -106,7 +112,7 @@ export class SessionsViewProvider {
       });
   }
 
-  static buildHtml(rows: SessionRow[], refreshing = false): string {
+  static buildHtml(rows: SessionRow[], refreshing = false, logoUri = ''): string {
     const safe = JSON.stringify(rows).replace(/<\/script>/gi, '<\\/script>');
     const parts: string[] = [];
 
@@ -114,18 +120,17 @@ export class SessionsViewProvider {
     parts.push('<meta charset="UTF-8">');
     parts.push('<meta name="viewport" content="width=device-width, initial-scale=1.0">');
     parts.push('<title>AI Sessions</title>');
-    parts.push('<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>');
     parts.push('<style>');
     parts.push(':root{--bg-base:#0e0e0e;--bg-surface:#1a1919;--bg-surface-high:#201f1f;--text-primary:#e5e2e1;--text-secondary:#c1c6d7;--primary:#007AFF;--primary-glow:rgba(0,122,255,0.2);--border:rgba(255,255,255,0.05);--font-primary:"Inter",system-ui,sans-serif;--font-data:"JetBrains Mono",monospace;}');
     parts.push('*{margin:0;padding:0;box-sizing:border-box;}');
-    parts.push('body{font-family:var(--font-primary);background:var(--bg-base);color:var(--text-primary);padding:32px;line-height:1.6;}');
-    parts.push('.header{display:flex;align-items:center;gap:16px;margin-bottom:32px;padding-bottom:16px;border-bottom:1px solid var(--border);}');
-    parts.push('.header h1{font-size:2em;font-weight:600;letter-spacing:-0.02em;}');
-    parts.push('.nav{display:flex;gap:8px;margin-left:auto;}');
+    parts.push('body{font-family:var(--font-primary);background:var(--bg-base);color:var(--text-primary);padding:0;line-height:1.6;}');
+    parts.push(navCss());
     parts.push('.btn{background:transparent;border:1px solid var(--border);color:var(--text-primary);padding:8px 16px;border-radius:4px;cursor:pointer;font-size:0.85em;font-weight:500;transition:all 0.2s;}');
     parts.push('.btn:hover{background:rgba(255,255,255,0.05);}');
     parts.push('.btn-primary{background:var(--primary);color:white;border:none;box-shadow:0 0 15px var(--primary-glow);}');
     parts.push('.btn-primary:hover{background:#005bc1;}');
+    parts.push('.btn.is-loading{opacity:0.7;pointer-events:none;}');
+    parts.push('.btn.is-loading::after{content:"";display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,0.3);border-top-color:white;border-radius:50%;animation:spin 0.7s linear infinite;margin-left:6px;vertical-align:middle;}');
 
     parts.push('.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px;}');
     parts.push('.summary-card{background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;padding:20px;text-align:center;transition:transform 0.2s;position:relative;overflow:hidden;}');
@@ -188,6 +193,15 @@ export class SessionsViewProvider {
     parts.push('.loading-bar-fill{height:100%;width:40%;background:var(--primary);border-radius:0 2px 2px 0;animation:loadslide 1.4s ease-in-out infinite;}');
     parts.push('@keyframes loadslide{0%{transform:translateX(-100%)}60%{transform:translateX(280%)}100%{transform:translateX(280%)}}');
     parts.push('.loading-banner{background:rgba(0,122,255,0.08);border-bottom:1px solid rgba(0,122,255,0.2);padding:8px 32px;font-size:0.82em;color:#6db3ff;display:flex;align-items:center;gap:8px;}');
+    parts.push('.mini-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:14px;margin-bottom:16px;}');
+    parts.push('.mini-card{background:var(--bg-surface-high);border:1px solid var(--border);border-radius:6px;padding:14px 16px;}');
+    parts.push('.mini-label{font-size:0.72em;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);margin-bottom:8px;font-weight:600;}');
+    parts.push('.mini-val{font-size:1.5em;font-weight:600;font-family:var(--font-data);color:var(--text-primary);}');
+    parts.push('.mini-sub{font-size:0.75em;color:var(--text-secondary);margin-top:4px;}');
+    parts.push('.complexity-section{background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;padding:20px 24px;margin-bottom:24px;}');
+    parts.push('.complexity-section h2{font-size:1em;font-weight:600;margin-bottom:4px;letter-spacing:-0.01em;}');
+    parts.push('.complexity-section .subtitle{font-size:0.8em;color:var(--text-secondary);margin-bottom:16px;}');
+    parts.push('.highest-cost-box{background:var(--bg-surface-high);border-radius:4px;padding:10px 14px;font-size:0.82em;margin-top:12px;}');
     parts.push('.loading-spinner{width:12px;height:12px;border:2px solid rgba(0,122,255,0.3);border-top-color:var(--primary);border-radius:50%;animation:spin 0.7s linear infinite;flex-shrink:0;}');
     parts.push('@keyframes spin{to{transform:rotate(360deg)}}');
     parts.push('.pagination{display:flex;align-items:center;justify-content:center;gap:12px;padding:14px 16px;border-top:1px solid var(--border);}');
@@ -197,17 +211,15 @@ export class SessionsViewProvider {
     parts.push('.page-info{font-size:0.85em;color:var(--text-secondary);}');
     parts.push('</style></head><body>');
 
+    parts.push(navTopbarHtml(logoUri, true, refreshing));
     if (refreshing) {
       parts.push('<div class="loading-bar"><div class="loading-bar-fill"></div></div>');
-      parts.push('<div class="loading-banner"><div class="loading-spinner"></div>Refreshing sessions…</div>');
+      parts.push('<div class="loading-banner"><div class="loading-spinner"></div>Loading sessions…</div>');
     }
-    parts.push('<div class="header">');
-    parts.push('  <h1>&#128203; AI Sessions</h1>');
-    parts.push('  <div class="nav">');
-    parts.push('    <button class="btn" id="exportBtn">&#8615; Export CSV</button>');
-    parts.push('    <button class="btn btn-primary" id="refreshBtn">&#128260; Refresh</button>');
-    parts.push('    <button class="btn" id="dashBtn">&#8592; Dashboard</button>');
-    parts.push('  </div>');
+    parts.push(navPagebarHtml('sessions', 'Sessions'));
+    parts.push('<div class="ns-content">');
+    parts.push('<div style="display:flex;align-items:center;gap:8px;margin-bottom:20px;">');
+    parts.push('  <button class="btn" id="exportBtn" style="height:32px;">&#8615; Export CSV</button>');
     parts.push('</div>');
 
     parts.push('<div class="summary-grid">');
@@ -246,9 +258,26 @@ export class SessionsViewProvider {
     parts.push('  <span class="legend-item"><span class="legend-dot" style="background:#FFD60A"></span>Cache write</span>');
     parts.push('</div>');
 
+    // Session Complexity widget
+    parts.push('<div class="complexity-section" id="complexityWidget">');
+    parts.push('  <h2>\uD83D\uDD0D Session Complexity</h2>');
+    parts.push('  <p class="subtitle">Breakdown of session depth and cost drivers &mdash; updates with active filters</p>');
+    parts.push('  <div class="mini-grid">');
+    parts.push('    <div class="mini-card"><div class="mini-label">Avg Session Depth</div><div class="mini-val" id="scDepth">-</div><div class="mini-sub">interactions / session</div></div>');
+    parts.push('    <div class="mini-card"><div class="mini-label">Avg Duration</div><div class="mini-val" id="scDuration">-</div><div class="mini-sub">minutes / session</div></div>');
+    parts.push('    <div class="mini-card"><div class="mini-label">Long Sessions &gt;30 min</div><div class="mini-val" id="scLong">-</div><div class="mini-sub" id="scLongCost"></div></div>');
+    parts.push('    <div class="mini-card"><div class="mini-label">Tool-Heavy Sessions</div><div class="mini-val" id="scToolHeavy">-</div><div class="mini-sub">&gt;5 unique tools</div></div>');
+    parts.push('    <div class="mini-card"><div class="mini-label">Thinking Sessions</div><div class="mini-val" id="scThinking">-</div><div class="mini-sub">extended reasoning used</div></div>');
+    parts.push('    <div class="mini-card"><div class="mini-label">Multi-Model Sessions</div><div class="mini-val" id="scMultiModel">-</div><div class="mini-sub">&gt;1 model per session</div></div>');
+    parts.push('  </div>');
+    parts.push('  <div class="highest-cost-box" id="scHighestCost" style="display:none"></div>');
+    parts.push('</div>');
+
     parts.push('<div class="section"><div id="tableContainer"></div></div>');
     parts.push('<div class="footer">Deep session analysis for AI-assisted development. Data updated in real-time.</div>');
+    parts.push('</div><!-- /ns-content -->');
 
+    parts.push('<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>');
     parts.push('<script>window.__SESSIONS__=');
     parts.push(safe);
     parts.push(';</script>');
@@ -256,6 +285,7 @@ export class SessionsViewProvider {
     parts.push('<script>');
     parts.push('(function(){');
     parts.push('  var vscode=acquireVsCodeApi();');
+    parts.push('  window.vscode=vscode;');
     parts.push('  var ALL_SESSIONS=window.__SESSIONS__||[];');
     parts.push('  var sortKey="startTime";');
     parts.push('  var sortDir=-1;');
@@ -266,8 +296,9 @@ export class SessionsViewProvider {
     parts.push('  Chart.defaults.font.family="var(--font-primary)";');
     parts.push('  Chart.defaults.color="#c1c6d7";');
 
-    parts.push('  document.getElementById("refreshBtn").onclick=function(){vscode.postMessage({command:"refresh"});};');
-    parts.push('  document.getElementById("dashBtn").onclick=function(){vscode.postMessage({command:"showDashboard"});};');
+    parts.push('  function _clr(){document.querySelectorAll(".is-loading").forEach(function(e){e.classList.remove("is-loading");});var r=document.getElementById("btnRefresh");if(r)r.textContent="\u21ba Refresh";}');
+    parts.push('  var _rb=document.getElementById("btnRefresh");if(_rb){_rb.addEventListener("click",function(){_rb.classList.add("is-loading");_rb.textContent="\u27f3 Refreshing\u2026";vscode.postMessage({command:"refresh"});setTimeout(_clr,5000);});}');
+    parts.push('  document.addEventListener("visibilitychange",function(){if(document.visibilityState==="visible"){_clr();}});');
     parts.push('  document.getElementById("exportBtn").onclick=function(){');
     parts.push('    var headers=["Date","Provider","Title","Workspace","Total Tokens","Input","Output","Thinking","Cache Read","Cache Write","Cost USD","Interactions","Models","Duration"];');
     parts.push('    var rows=currentFiltered.map(function(s){');
@@ -343,6 +374,7 @@ export class SessionsViewProvider {
     parts.push('    render(f);');
     parts.push('    updateCharts(f);');
     parts.push('    updateStats(f);');
+    parts.push('    updateComplexity(f);');
     parts.push('    saveState();');
     parts.push('  }');
 
@@ -360,6 +392,40 @@ export class SessionsViewProvider {
     parts.push('    document.getElementById("statCost").textContent="$"+totalCost.toFixed(2);');
     parts.push('    document.getElementById("statCredits").textContent=copilotCredits>0?Math.round(copilotCredits)+" Copilot credits":"Copilot credits N/A";');
     parts.push('    document.getElementById("statRepos").textContent=repos.size;');
+    parts.push('  }');
+
+    parts.push('  function updateComplexity(sessions){');
+    parts.push('    if(!sessions.length){');
+    parts.push('      ["scDepth","scDuration","scLong","scToolHeavy","scThinking","scMultiModel"].forEach(function(id){var e=document.getElementById(id);if(e)e.textContent="-";});');
+    parts.push('      var hc=document.getElementById("scHighestCost");if(hc)hc.style.display="none";');
+    parts.push('      return;');
+    parts.push('    }');
+    parts.push('    var totalDepth=0,totalDurMs=0,longCount=0,longCost=0,toolHeavy=0,thinking=0,multiModel=0,highCost=0,highSess=null;');
+    parts.push('    sessions.forEach(function(s){');
+    parts.push('      totalDepth+=s.interactions;');
+    parts.push('      var dur=new Date(s.endTime).getTime()-new Date(s.startTime).getTime();');
+    parts.push('      if(dur>0)totalDurMs+=dur;');
+    parts.push('      if(dur>30*60*1000){longCount++;longCost+=s.estimatedCostUsd;}');
+    parts.push('      if(s.totalToolCalls>5)toolHeavy++;');
+    parts.push('      if(s.totalThinkingTokens>0)thinking++;');
+    parts.push('      if((s.models||[]).length>1)multiModel++;');
+    parts.push('      if(s.estimatedCostUsd>highCost){highCost=s.estimatedCostUsd;highSess=s;}');
+    parts.push('    });');
+    parts.push('    var n=sessions.length;');
+    parts.push('    var avgDepth=(totalDepth/n).toFixed(1);');
+    parts.push('    var avgDurMin=((totalDurMs/n)/60000).toFixed(1);');
+    parts.push('    document.getElementById("scDepth").textContent=avgDepth;');
+    parts.push('    document.getElementById("scDuration").textContent=avgDurMin+" min";');
+    parts.push('    document.getElementById("scLong").textContent=longCount;');
+    parts.push('    var lc=document.getElementById("scLongCost");if(lc)lc.textContent=longCount?"cost $"+longCost.toFixed(4):"";');
+    parts.push('    document.getElementById("scToolHeavy").textContent=toolHeavy;');
+    parts.push('    document.getElementById("scThinking").textContent=thinking;');
+    parts.push('    document.getElementById("scMultiModel").textContent=multiModel;');
+    parts.push('    var hcBox=document.getElementById("scHighestCost");');
+    parts.push('    if(hcBox&&highSess&&highSess.estimatedCostUsd>0){');
+    parts.push('      hcBox.style.display="";');
+    parts.push('      hcBox.innerHTML="<strong>\u{1F4B0} Highest-Cost Session</strong> &nbsp;&middot;&nbsp; <span style=\'color:var(--text-secondary)\'>ID: "+esc(highSess.id)+"</span>&nbsp;&middot;&nbsp; <strong>$"+highSess.estimatedCostUsd.toFixed(4)+"</strong>&nbsp;&middot;&nbsp; "+fmt(highSess.totalTokens)+" tokens";');
+    parts.push('    } else if(hcBox){hcBox.style.display="none";}');
     parts.push('  }');
 
     parts.push('  function updateCharts(sessions){');
@@ -440,6 +506,7 @@ export class SessionsViewProvider {
     parts.push('  window.goToPage=goToPage;');
     parts.push('  applyFilters();');
     parts.push('})();');
+    parts.push(navJs());
     parts.push('</script>');
     parts.push('</body></html>');
 

@@ -1,16 +1,18 @@
 import * as vscode from 'vscode';
 import { PromptRecord } from '../core/promptHistory';
 import { PROVIDER_ICONS } from './providerIcons';
+import { navCss, navTopbarHtml, navPagebarHtml, navJs, NAV_COMMANDS } from './navShared';
 
 export class PromptHistoryViewProvider {
   static readonly viewType = 'aiInsights.promptHistory';
   private static currentPanel: vscode.WebviewPanel | undefined;
 
-  static createPanel(context: vscode.ExtensionContext, records: PromptRecord[]): vscode.WebviewPanel {
-    const html = PromptHistoryViewProvider.buildHtml(records);
+  static createPanel(context: vscode.ExtensionContext, records: PromptRecord[], refreshing = false): vscode.WebviewPanel {
+    const logoPath = vscode.Uri.joinPath(context.extensionUri, 'assets', 'logo.png');
 
     if (PromptHistoryViewProvider.currentPanel) {
-      PromptHistoryViewProvider.currentPanel.webview.html = html;
+      const logoUri = PromptHistoryViewProvider.currentPanel.webview.asWebviewUri(logoPath).toString();
+      PromptHistoryViewProvider.currentPanel.webview.html = PromptHistoryViewProvider.buildHtml(records, refreshing, logoUri);
       PromptHistoryViewProvider.currentPanel.reveal(vscode.ViewColumn.One);
       return PromptHistoryViewProvider.currentPanel;
     }
@@ -19,19 +21,21 @@ export class PromptHistoryViewProvider {
       PromptHistoryViewProvider.viewType,
       'Prompt History',
       vscode.ViewColumn.One,
-      { enableScripts: true, retainContextWhenHidden: true },
+      {
+        enableScripts: true,
+        retainContextWhenHidden: true,
+        localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'assets')],
+      },
     );
-
-    panel.webview.html = html;
+    const logoUri = panel.webview.asWebviewUri(logoPath).toString();
+    panel.webview.html = PromptHistoryViewProvider.buildHtml(records, refreshing, logoUri);
 
     panel.webview.onDidReceiveMessage(
       (message) => {
+        const navCmd = NAV_COMMANDS[message.command];
+        if (navCmd) { vscode.commands.executeCommand(navCmd); return; }
         if (message.command === 'refresh') {
           vscode.commands.executeCommand('aiInsights.showPromptHistory');
-        } else if (message.command === 'showDashboard') {
-          vscode.commands.executeCommand('aiInsights.showDashboard');
-        } else if (message.command === 'showSessions') {
-          vscode.commands.executeCommand('aiInsights.showSessions');
         } else if (message.command === 'openFile' && message.path) {
           vscode.workspace.openTextDocument(vscode.Uri.file(message.path))
             .then(doc => vscode.window.showTextDocument(doc))
@@ -50,7 +54,7 @@ export class PromptHistoryViewProvider {
     return panel;
   }
 
-  private static buildHtml(records: PromptRecord[]): string {
+  private static buildHtml(records: PromptRecord[], refreshing = false, logoUri = ''): string {
     const recent = records.slice(0, 50);
     const serialized = JSON.stringify(recent.map(r => ({
       timestamp: r.timestamp instanceof Date ? r.timestamp.toISOString() : String(r.timestamp),
@@ -74,19 +78,17 @@ export class PromptHistoryViewProvider {
     p.push('<meta charset="UTF-8">');
     p.push('<meta name="viewport" content="width=device-width, initial-scale=1.0">');
     p.push('<title>Prompt History</title>');
-    p.push('<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>');
     p.push('<style>');
     p.push(':root{--bg-base:#0e0e0e;--bg-surface:#1a1919;--bg-surface-high:#201f1f;--text-primary:#e5e2e1;--text-secondary:#c1c6d7;--primary:#007AFF;--primary-glow:rgba(0,122,255,0.2);--border:rgba(255,255,255,0.05);--font-primary:"Inter",system-ui,sans-serif;--font-data:"JetBrains Mono",monospace;}');
     p.push('*{margin:0;padding:0;box-sizing:border-box;}');
-    p.push('body{font-family:var(--font-primary);background:var(--bg-base);color:var(--text-primary);padding:32px;line-height:1.6;}');
-    p.push('.header{display:flex;align-items:center;gap:16px;margin-bottom:32px;padding-bottom:16px;border-bottom:1px solid var(--border);}');
-    p.push('.header h1{font-size:2em;font-weight:600;letter-spacing:-0.02em;}');
-    p.push('.header-sub{font-size:0.8em;color:var(--text-secondary);margin-top:2px;}');
-    p.push('.nav{display:flex;gap:8px;margin-left:auto;}');
+    p.push('body{font-family:var(--font-primary);background:var(--bg-base);color:var(--text-primary);padding:0;line-height:1.6;}');
+    p.push(navCss());
     p.push('.btn{background:transparent;border:1px solid var(--border);color:var(--text-primary);padding:8px 16px;border-radius:4px;cursor:pointer;font-size:0.85em;font-weight:500;transition:all 0.2s;}');
     p.push('.btn:hover{background:rgba(255,255,255,0.05);}');
     p.push('.btn-primary{background:var(--primary);color:white;border:none;box-shadow:0 0 15px var(--primary-glow);}');
     p.push('.btn-primary:hover{background:#005bc1;}');
+    p.push('.btn.is-loading{opacity:0.7;pointer-events:none;}');
+    p.push('.btn.is-loading::after{content:"";display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,0.3);border-top-color:white;border-radius:50%;animation:spin 0.7s linear infinite;margin-left:6px;vertical-align:middle;}');
     p.push('.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:16px;margin-bottom:32px;}');
     p.push('.card{background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;padding:20px;text-align:center;transition:transform 0.2s;}');
     p.push('.card:hover{transform:translateY(-2px);border-color:rgba(0,122,255,0.3);}');
@@ -125,19 +127,21 @@ export class PromptHistoryViewProvider {
     p.push('.preview-cell.has-text{color:var(--text-primary);}');
     p.push('.btn-open{background:transparent;border:1px solid var(--border);color:var(--text-secondary);padding:3px 8px;border-radius:3px;cursor:pointer;font-size:0.75em;white-space:nowrap;transition:all 0.15s;}');
     p.push('.btn-open:hover{border-color:var(--primary);color:var(--primary);}');
+    p.push('.loading-bar{position:fixed;top:0;left:0;right:0;z-index:100;height:3px;background:rgba(0,122,255,0.15);overflow:hidden;}');
+    p.push('.loading-bar-fill{height:100%;width:40%;background:var(--primary);border-radius:0 2px 2px 0;animation:loadslide 1.4s ease-in-out infinite;}');
+    p.push('@keyframes loadslide{0%{transform:translateX(-100%)}60%{transform:translateX(280%)}100%{transform:translateX(280%)}}');
+    p.push('.loading-banner{background:rgba(0,122,255,0.08);border-bottom:1px solid rgba(0,122,255,0.2);padding:8px 32px;font-size:0.82em;color:#6db3ff;display:flex;align-items:center;gap:8px;}');
+    p.push('.loading-spinner{width:12px;height:12px;border:2px solid rgba(0,122,255,0.3);border-top-color:var(--primary);border-radius:50%;animation:spin 0.7s linear infinite;flex-shrink:0;}');
+    p.push('@keyframes spin{to{transform:rotate(360deg)}}');
     p.push('</style></head><body>');
 
-    p.push('<div class="header">');
-    p.push('  <div>');
-    p.push('    <h1>&#9889; Prompt History</h1>');
-    p.push('    <div class="header-sub">Each row = one user prompt - all agent turns grouped together</div>');
-    p.push('  </div>');
-    p.push('  <div class="nav">');
-    p.push('    <button class="btn" id="sessionsBtn">Sessions</button>');
-    p.push('    <button class="btn btn-primary" id="refreshBtn">&#128260; Refresh</button>');
-    p.push('    <button class="btn" id="dashBtn">&#8592; Dashboard</button>');
-    p.push('  </div>');
-    p.push('</div>');
+    p.push(navTopbarHtml(logoUri, true, refreshing));
+    if (refreshing) {
+      p.push('<div class="loading-bar"><div class="loading-bar-fill"></div></div>');
+      p.push('<div class="loading-banner"><div class="loading-spinner"></div>Loading prompt history…</div>');
+    }
+    p.push(navPagebarHtml('promptHistory', 'Prompt History'));
+    p.push('<div class="ns-content">');
 
     p.push('<div class="summary-grid">');
     p.push('  <div class="card"><div class="card-label">Prompts (today)</div><div class="card-value" id="statToday">0</div><div class="card-sub" id="statTodaySub">0 sessions</div></div>');
@@ -160,22 +164,25 @@ export class PromptHistoryViewProvider {
     p.push('</div>');
 
     p.push('<div class="section"><div id="tableContainer"></div></div>');
+    p.push('</div><!-- /ns-content -->');
 
+    p.push('<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>');
     p.push(`<script>window.__RECORDS__=${serialized};</script>`);
     p.push(`<script>window.__ICONS__=${JSON.stringify(PROVIDER_ICONS)};</script>`);
 
     p.push('<script>');
     p.push('(function(){');
     p.push('var vscode=acquireVsCodeApi();');
+    p.push('window.vscode=vscode;');
     p.push('var ALL=window.__RECORDS__||[];');
     p.push('var ICONS=window.__ICONS__||{};');
     p.push('var sparkChart;');
     p.push('var currentRows=[];');
 
-    p.push('document.getElementById("refreshBtn").onclick=function(){vscode.postMessage({command:"refresh"});};');
-    p.push('document.getElementById("dashBtn").onclick=function(){vscode.postMessage({command:"showDashboard"});};');
-    p.push('document.getElementById("sessionsBtn").onclick=function(){vscode.postMessage({command:"showSessions"});};');
+    p.push('function _clr(){document.querySelectorAll(".is-loading").forEach(function(e){e.classList.remove("is-loading");});var r=document.getElementById("btnRefresh");if(r)r.textContent="\u21ba Refresh";}');
+    p.push('var _rb=document.getElementById("btnRefresh");if(_rb){_rb.addEventListener("click",function(){_rb.classList.add("is-loading");_rb.textContent="\u27f3 Refreshing\u2026";vscode.postMessage({command:"refresh"});setTimeout(_clr,5000);});}');
     p.push('document.getElementById("limitSelect").onchange=render;');
+    p.push('document.addEventListener("visibilitychange",function(){if(document.visibilityState==="visible"){_clr();}});');
     p.push('document.getElementById("providerFilter").onchange=render;');
 
     p.push('function fmt(n){if(n>=1e6)return(n/1e6).toFixed(1)+"M";if(n>=1e3)return(n/1e3).toFixed(1)+"K";return String(n||0);}');
@@ -258,6 +265,7 @@ export class PromptHistoryViewProvider {
     p.push('updateSparkline();');
     p.push('render();');
     p.push('})();');
+    p.push(navJs());
     p.push('</script>');
     p.push('</body></html>');
 
