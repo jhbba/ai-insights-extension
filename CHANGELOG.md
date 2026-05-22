@@ -2,7 +2,56 @@
 
 All notable changes to the AI Insights extension will be documented in this file.
 
-## [Unreleased] - 2026-05-14
+## [Unreleased]
+
+### Added
+
+- **Benchmark experimental notice** — a warning banner is now shown at the top of the Benchmark view noting the feature is experimental and that running all combinations can consume significant tokens.
+- **Benchmark confirm modal** — clicking "Run Benchmark" now shows a confirmation dialog with a breakdown of selected techniques, tasks, rot states, runs per combination, and the total run count before execution begins.
+
+- **Copilot session snapshot store** — Copilot chat sessions are now persisted to VS Code's extension global storage (`SessionSnapshotStore`) every time they are parsed. When a developer clears a Copilot chat (which deletes the underlying session file), the extension replays data from the snapshot so analytics remain complete. Claude Code is unaffected — its append-only JSONL format already survives `/clear` and `/compact`. See [wiki/developer-guide.md](wiki/developer-guide.md) for the full developer guide on safe session management.
+
+### Changed
+
+- **Analyze opens inline overlay instead of separate panel** — clicking "Analyze" on any session row now slides open a right-side drawer inside the Sessions view itself. The full Context Workbench analysis (score ring, context size, timeline chart, files in context, overload signals, interaction timeline, fresh-session brief, rehydration checklist, patterns) renders inline without navigating away. Click the backdrop or × to dismiss. The analysis data (context-rot analyses + per-interaction detail) is embedded directly in the sessions page HTML on load, so the overlay appears instantly.
+
+### Fixed
+
+- **Context Workbench blank screen** — clicking "Analyze" on a session now immediately renders the full analysis panel. Previously the JS init called chart renderers before building the HTML, leaving `wbMain` empty.
+
+### Added
+
+- **Context Size panel** in Context Workbench — shows peak context size, last-turn context size, cache hit rate, and total tokens from cache. Stacked bar visualises the input / output / thinking token split for the whole session.
+
+- **Interaction Timeline** in Context Workbench — per-turn rows showing timestamp, mode badge, truncated prompt preview, tool call badges, and token breakdown (↑ input, ↓ output, ⚡ cache read, think, ✍ cache write). Shows last 20 turns; earlier turns indicated with a count.
+
+- **Files in Context** panel in Context Workbench — shows unique files Read/Edited/Written during the session (accumulated in the context window), with per-file read/edit/write counts, paths shortened relative to workspace. Sorted edited-first.
+
+### Fixed
+
+- **Claude Code tool call extraction was always empty** — the parser was reading `entry.tool_calls` (never present in JSONL) instead of `message.content[].type === "tool_use"`. Tool names and file paths are now correctly extracted, fixing heavy-tool and pattern detection for Claude Code sessions.
+
+- **Technique Benchmark** (`AI Insights: Show Technique Benchmark`) — new "Benchmark" tab for comparing AI context techniques (bare, CLAUDE.md-only, LLM-wiki, Memory Bank, caveman-compressed, type-first) against each other. Measures input/output/cache tokens, cost, hallucination score, task success score, and TTFT via Anthropic API. Supports 4 context rot states (fresh/warm/bloated/critical) to test technique resilience under realistic session degradation. LLM-as-judge scores each response against ground truth. Results shown in three views: Technique Comparison table, Rot Degradation table, and Raw Results. API key stored securely in VS Code SecretStorage.
+
+- **git worktree isolation** — each technique runs in a throwaway `git worktree` branch (`bench/{id}`), leaving the original repo untouched. Worktrees are cleaned up automatically after each run.
+
+- **Benchmark tasks are now repo-agnostic** — all 5 built-in tasks (`K1-project-overview`, `K2-main-modules`, `G1-utility-function`, `D1-stale-data`, `R2-contradiction`) and the synthetic ROT_HISTORY conversation turns no longer reference ai-insights internals. The benchmark works against any repository where the extension is installed. The Memory Bank technique generates its `memory-bank/*.md` files dynamically from the target repo's README, primary language, and discovered file structure.
+
+## [0.1.7] - 2026-05-16
+
+### Added
+
+- **Live Session Monitor** (`AI Insights: Show Live Session Monitor`) — new "Live" tab detecting sessions written to within the last 3 minutes across all providers. Cards show current tokens, elapsed time, burn rate (tokens/min over last 10 min), projected budget exhaustion, and a budget consumption bar. Alerts: high burn (>2K/min), spike (>3× normal), rate limit imminent (<60 min), rate limit hit. Manual calibration form for budget type, token/USD limits, and window reset. "Log Rate Limit Hit" button persists real events to globalState. Auto-refreshes every 30 s.
+
+- **Context Efficiency Workbench** (`AI Insights: Show Context Efficiency Workbench`) — new "Context" tab with a left session-picker sidebar and right analysis panel: score ring (0–10), restart-recommended banner, context timeline chart (input/output/tool calls per turn), overload signals grid (high I/O ratio, long turn chain, large static context, output collapse, tool loop), fresh session brief (goal, write ops, next action, warnings), rehydration checklist, and pattern detection (heavy tools, repeated prompt fragments).
+
+- **Expanded `ContextRotAnalysis`** — `computeContextRotAnalysis()` returns timeline, overload signals, restart recommendation, checklist, and fresh session brief. Existing `computeContextRotScore()` remains as a lightweight backward-compatible wrapper.
+
+- **"Analyze" button in Sessions view** — each row now shows an "Analyze" button that opens the Context Workbench focused on that session.
+
+- **Live budget config and rate-limit event log persistence** — budget config and up to 100 rate-limit events survive restarts via VS Code globalState.
+
+## [0.1.6] - 2026-05-14
 
 ### Added
 
@@ -16,7 +65,7 @@ All notable changes to the AI Insights extension will be documented in this file
 
 - **Filter bar label visibility** — PROVIDER and PERIOD group labels are now rendered at lower opacity (`rgba(193,198,215,0.38)`) and smaller letter-spacing to visually subordinate them relative to the filter chips, making the two groups easier to scan at a glance.
 
-## [Unreleased] - 2026-05-12
+## [0.1.5] - 2026-05-12
 
 ### Added
 
@@ -30,7 +79,7 @@ All notable changes to the AI Insights extension will be documented in this file
 
 - **Cache hit column shows `—` for providers without cache data** — GitHub Copilot and Antigravity logs don't expose cache token counts, so the "Usage by Provider" table was incorrectly displaying `0%` instead of `—`. The cell now shows `—` when both `cacheReadTokens` and `cacheWriteTokens` are zero (no cache data reported), and only computes a percentage when at least one exists.
 
-## [Unreleased] - 2026-05-11
+## [0.1.4] - 2026-05-11
 
 ### Added
 
@@ -46,7 +95,7 @@ All notable changes to the AI Insights extension will be documented in this file
 - **Usage Analysis → Tools & MCP tab** — removed the generic "🔧 Tool Usage" subsection; only the MCP Tools table is shown.
 - **Usage Analysis → Cost & Impact tab** — removed the "📁 Repository Cost Attribution" section; repository cost data now appears in the dashboard's "📁 Usage by Repository (This Month)" box (with Cost and Share columns).
 
-## [Unreleased] - 2026-05-10
+## [0.1.3] - 2026-05-10
 
 ### Added
 
@@ -60,7 +109,7 @@ All notable changes to the AI Insights extension will be documented in this file
 
 - **GitHub Copilot AI Credits Summary — previous month column** — the "💳 GitHub Copilot AI Credits Summary" table on the dashboard now shows a side-by-side comparison: "This Month" (bright) and "Last Month" (dimmed) columns for input tokens, cached input tokens, output tokens, optional cache-write tokens, and the total AI Credits / USD. Cache-write row is shown only when either month has non-zero cache writes.
 
-## [Unreleased] - 2026-05-04
+## [0.1.2] - 2026-05-04
 
 ### Added
 

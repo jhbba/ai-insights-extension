@@ -21,6 +21,8 @@ export interface Interaction {
   mode: string;
   /** Tool calls made during this interaction */
   toolCalls: string[];
+  /** File paths accessed via Read / Edit / Write tools in this interaction */
+  fileAccesses?: Array<{ tool: string; path: string }>;
   /** First ~200 chars of the user message that triggered this interaction */
   promptPreview?: string;
 }
@@ -300,6 +302,133 @@ export interface AcceptanceMetrics {
   acceptanceRate: number;
   /** Wall-clock time when tracking began (extension activation) */
   since: Date;
+}
+
+// ─── Active Session Tracking ──────────────────────────────────────────────────
+
+export type LiveBudgetType = 'daily' | 'weekly' | 'monthly' | 'fixed';
+
+export interface LiveBudgetConfig {
+  type: LiveBudgetType;
+  limitTokens?: number;
+  limitUsd?: number;
+  /** ISO date string — start of the fixed window */
+  fixedWindowStart?: string;
+  /** ISO date string — end of the fixed window */
+  fixedWindowEnd?: string;
+}
+
+export type LiveAlertType = 'spike' | 'high_burn' | 'rate_limit_imminent' | 'rate_limit_hit';
+
+export interface LiveAlert {
+  type: LiveAlertType;
+  message: string;
+  severity: 'warning' | 'error';
+  timestamp: string; // ISO
+}
+
+export interface LiveSessionState {
+  provider: ProviderId;
+  sessionId: string;
+  sessionFilePath: string;
+  sessionTitle: string;
+  sessionStartTime: string; // ISO
+  elapsedMinutes: number;
+  currentTokens: number;
+  currentInputTokens: number;
+  currentOutputTokens: number;
+  /** Tokens per minute averaged over the last 10 min or all interactions, whichever is smaller */
+  recentBurnRatePerMin: number;
+  /** Minutes from now until budget is exhausted at current burn rate; null if unlimited or no budget */
+  projectedExhaustionMinutes: number | null;
+  /** Tokens consumed in the current budget window (daily/weekly/monthly/fixed) */
+  budgetWindowUsedTokens: number;
+  /** USD consumed in the current budget window */
+  budgetWindowUsedUsd: number;
+  /** ISO datetime when the current budget window resets */
+  budgetWindowResetTime: string | null;
+  /** 0–100 percentage of budget consumed */
+  budgetUsedPct: number | null;
+  alerts: LiveAlert[];
+  /** ISO datetime of last update */
+  lastUpdated: string;
+}
+
+export interface RateLimitEvent {
+  timestamp: string; // ISO
+  provider: ProviderId;
+  sessionId?: string;
+  note?: string;
+}
+
+export interface LiveMonitorCalibration {
+  provider: ProviderId;
+  /** User-provided current usage percentage 0–100 */
+  currentUsagePct: number;
+  /** ISO datetime of next window reset */
+  resetTime: string | null;
+  planName: string;
+  budgetConfig: LiveBudgetConfig;
+}
+
+// ─── Context Rot Workbench ────────────────────────────────────────────────────
+
+export interface ContextTimelinePoint {
+  turnIndex: number;
+  inputTokens: number;
+  outputTokens: number;
+  thinkingTokens: number;
+  toolCallCount: number;
+  cacheHit: boolean;
+  timestamp: string; // ISO
+}
+
+export type OverloadSignalType =
+  | 'high_input_output_ratio'
+  | 'long_turn_chain'
+  | 'repeated_tool_failures'
+  | 'large_static_context'
+  | 'output_collapse'
+  | 'tool_loop';
+
+export interface OverloadSignal {
+  type: OverloadSignalType;
+  severity: 'low' | 'medium' | 'high';
+  message: string;
+  detail: string;
+}
+
+export interface FreshSessionBrief {
+  /** First user prompt (truncated) */
+  goal: string;
+  /** Tool types inferred as write operations */
+  writeOperations: string[];
+  /** Last 3 prompt previews (truncated) */
+  recentContext: string[];
+  /** Most recent interaction preview */
+  nextAction: string;
+  warnings: string[];
+}
+
+export interface ContextRotAnalysis {
+  score: number;
+  label: 'healthy' | 'warning' | 'stale';
+  turnsCount: number;
+  sessionAgeMinutes: number;
+  inputBloatFactor: number;
+  outputDeclineFactor: number;
+  /** Per-turn timeline for chart rendering */
+  timeline: ContextTimelinePoint[];
+  /** Detected overload conditions */
+  overloadSignals: OverloadSignal[];
+  /** Prompt fragments appearing more than once (from promptPreview) */
+  repeatedPromptFragments: string[];
+  /** Tool names called 3+ times across interactions */
+  heavyToolUsage: string[];
+  restartRecommended: boolean;
+  restartReason: string;
+  rehydrationChecklist: string[];
+  freshSessionBrief: FreshSessionBrief;
 }
 
 /** File cache entry for tracking modifications */

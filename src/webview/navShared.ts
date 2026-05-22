@@ -8,18 +8,20 @@ export type NavTab =
   | 'sessions'
   | 'promptHistory'
   | 'tokenCalculator'
+  | 'benchmark'
   | 'none';
 
 interface TabDef { id: NavTab; label: string; cmd: string; loadLabel: string; }
 
 const NAV_TABS: TabDef[] = [
-  { id: 'overview',        label: 'Overview',         cmd: 'showDashboard',       loadLabel: 'Loading dashboard…'        },
-  { id: 'sessions',        label: 'Sessions',          cmd: 'showSessions',        loadLabel: 'Loading sessions…'         },
-  { id: 'promptHistory',   label: 'Prompts',           cmd: 'showPromptHistory',   loadLabel: 'Loading prompt history…'   },
-  { id: 'usage',           label: 'Workspaces',        cmd: 'showUsageAnalysis',   loadLabel: 'Loading workspace analysis…'   },
-  { id: 'pricing',         label: 'Copilot',           cmd: 'showPricing',         loadLabel: 'Loading GitHub Copilot…'   },
-  { id: 'tokenCalculator', label: 'Calculator',        cmd: 'showTokenCalculator', loadLabel: 'Loading token calculator…' },
-  { id: 'diagnostics',     label: 'Diagnostics',       cmd: 'showDiagnostics',     loadLabel: 'Loading diagnostics…'      },
+  { id: 'overview',          label: 'Overview',         cmd: 'showDashboard',          loadLabel: 'Loading dashboard…'           },
+  { id: 'sessions',          label: 'Sessions',         cmd: 'showSessions',           loadLabel: 'Loading sessions…'            },
+  { id: 'promptHistory',     label: 'Prompts',          cmd: 'showPromptHistory',      loadLabel: 'Loading prompt history…'      },
+  { id: 'usage',             label: 'Workspaces',       cmd: 'showUsageAnalysis',      loadLabel: 'Loading workspace analysis…'  },
+  { id: 'pricing',           label: 'Copilot',          cmd: 'showPricing',            loadLabel: 'Loading GitHub Copilot…'      },
+  { id: 'tokenCalculator',   label: 'Calculator',       cmd: 'showTokenCalculator',    loadLabel: 'Loading token calculator…'    },
+  { id: 'benchmark',         label: 'Benchmark',        cmd: 'showBenchmark',          loadLabel: 'Loading benchmark…'           },
+  { id: 'diagnostics',       label: 'Diagnostics',      cmd: 'showDiagnostics',        loadLabel: 'Loading diagnostics…'         },
 ];
 
 /** Core nav system CSS — paste into any view's <style> block. */
@@ -145,12 +147,13 @@ export function navJs(): string {
 
 /** All nav-related vscode commands that each panel's onDidReceiveMessage should handle. */
 export const NAV_COMMANDS: Record<string, string> = {
-  showDashboard:      'aiInsights.showDashboard',
-  showUsageAnalysis:  'aiInsights.showUsageAnalysis',
-  showPricing:        'aiInsights.showPricing',
-  showDiagnostics:    'aiInsights.showDiagnostics',
-  showSessions:       'aiInsights.showSessions',
-  showSessionsView:   'aiInsights.showSessions',
-  showPromptHistory:  'aiInsights.showPromptHistory',
-  showTokenCalculator:'aiInsights.showTokenCalculator',
+  showDashboard:        'aiInsights.showDashboard',
+  showUsageAnalysis:    'aiInsights.showUsageAnalysis',
+  showPricing:          'aiInsights.showPricing',
+  showDiagnostics:      'aiInsights.showDiagnostics',
+  showSessions:         'aiInsights.showSessions',
+  showSessionsView:     'aiInsights.showSessions',
+  showPromptHistory:    'aiInsights.showPromptHistory',
+  showTokenCalculator:  'aiInsights.showTokenCalculator',
+  showBenchmark:        'aiInsights.showBenchmark',
 };

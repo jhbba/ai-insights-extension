@@ -26,22 +26,35 @@ import { ConnectedGitHubUser, connectGitHubAndDetectPlan } from './core/githubAu
 import { PromptHistoryStore } from './core/promptHistory';
 import { PromptHistoryViewProvider } from './webview/promptHistoryView';
 import { TokenCalculatorProvider } from './webview/tokenCalculator';
+import { BenchmarkViewProvider } from './webview/benchmarkView';
+import { detectLiveSessions } from './core/liveSessionMonitor';
+import { SessionSnapshotStore } from './core/sessionSnapshotStore';
+import { LiveBudgetConfig, RateLimitEvent } from './types';
 
 let statusBarItem: vscode.StatusBarItem;
 let refreshTimer: NodeJS.Timeout | undefined;
+let activeSessionsTimer: NodeJS.Timeout | undefined;
 let allSessions: Session[] = [];
 let latestMetrics: AggregatedMetrics | null = null;
 let connectedGitHubUser: ConnectedGitHubUser | undefined;
 const cacheManager = new CacheManager();
+let snapshotStore: SessionSnapshotStore;
 const promptHistoryStore = new PromptHistoryStore();
 const acceptanceTracker = new AcceptanceTracker();
 const DEFAULT_SESSION_LOOKBACK_DAYS = 400;
 const GITHUB_USER_STATE_KEY = 'aiInsights.githubUser';
+const LIVE_BUDGET_CONFIG_KEY = 'aiInsights.liveBudgetConfig';
+const RATE_LIMIT_EVENTS_KEY = 'aiInsights.rateLimitEvents';
+let liveBudgetConfig: LiveBudgetConfig | null = null;
+let rateLimitEvents: RateLimitEvent[] = [];
 
 export function activate(context: vscode.ExtensionContext) {
   console.log('[AI Insights] Activating extension...');
 
   connectedGitHubUser = context.globalState.get<ConnectedGitHubUser>(GITHUB_USER_STATE_KEY);
+  liveBudgetConfig = context.globalState.get<LiveBudgetConfig | null>(LIVE_BUDGET_CONFIG_KEY, null);
+  rateLimitEvents = context.globalState.get<RateLimitEvent[]>(RATE_LIMIT_EVENTS_KEY, []);
+  snapshotStore = new SessionSnapshotStore(context.globalStorageUri.fsPath);
   acceptanceTracker.register(context);
 
   const providers = getEnabledProviders();
@@ -66,9 +79,21 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('aiInsights.disconnectGitHub', () => handleDisconnectGitHub(context)),
     vscode.commands.registerCommand('aiInsights.showPromptHistory', () => showPromptHistory(context)),
     vscode.commands.registerCommand('aiInsights.showTokenCalculator', () => TokenCalculatorProvider.createPanel(context)),
+    vscode.commands.registerCommand('aiInsights.showBenchmark', () => BenchmarkViewProvider.createPanel(context)),
+    vscode.commands.registerCommand('aiInsights.logRateLimitHit', (provider: string, note: string) =>
+      handleLogRateLimitHit(context, provider as any, note),
+    ),
+    vscode.commands.registerCommand('aiInsights.saveLiveBudgetConfig', (cfg: LiveBudgetConfig) =>
+      handleSaveLiveBudgetConfig(context, cfg),
+    ),
   );
 
   refresh(providers);
+
+  activeSessionsTimer = setInterval(() => {
+    SessionsViewProvider.pushUpdate(context, allSessions, getLiveSessions(), liveBudgetConfig);
+  }, 30_000);
+  context.subscriptions.push({ dispose: () => { if (activeSessionsTimer) { clearInterval(activeSessionsTimer); } } });
 
   const config = vscode.workspace.getConfiguration('aiInsights');
   const intervalMin = config.get<number>('refreshIntervalMinutes', 5);
@@ -93,6 +118,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 export function deactivate() {
   if (refreshTimer) { clearInterval(refreshTimer); }
+  if (activeSessionsTimer) { clearInterval(activeSessionsTimer); }
 }
 
 function getEnabledProviders(): BaseProvider[] {
@@ -160,6 +186,8 @@ async function refresh(providers: BaseProvider[]) {
   try {
     const sessions: Session[] = [];
     const cutoff = getSessionCutoff();
+    // Track Copilot session IDs found in live files so we can fill gaps from snapshots.
+    const liveCopilotIds = new Set<string>();
 
     for (const provider of providers) {
       const files = await provider.discoverSessionFiles();
@@ -171,19 +199,36 @@ async function refresh(providers: BaseProvider[]) {
 
         if (!cacheManager.needsUpdate(file)) {
           const cached = cacheManager.get(file);
-          if (cached && isSessionRecent(cached, cutoff)) { sessions.push(cached); }
+          if (cached) {
+            if (cached.provider === 'copilot') { liveCopilotIds.add(cached.id); }
+            if (isSessionRecent(cached, cutoff)) { sessions.push(cached); }
+          }
           continue;
         }
 
         try {
           const session = await provider.parseSessionFile(file);
-          if (session !== null) { cacheManager.set(file, session); }
+          if (session !== null) {
+            cacheManager.set(file, session);
+            if (session.provider === 'copilot') {
+              liveCopilotIds.add(session.id);
+              snapshotStore.save(session);
+            }
+          }
           if (session && isSessionRecent(session, cutoff)) { sessions.push(session); }
         } catch {
           // Skip failed files silently
         }
       }
     }
+
+    // Merge persisted Copilot snapshots for sessions whose source files were deleted.
+    for (const snap of snapshotStore.loadAll()) {
+      if (!liveCopilotIds.has(snap.id) && isSessionRecent(snap, cutoff)) {
+        sessions.push(snap);
+      }
+    }
+    snapshotStore.prune(cutoff);
 
     allSessions = dedupeSessions(sessions);
     latestMetrics = aggregateSessions(allSessions, getAggregationConfig());
@@ -349,9 +394,9 @@ async function showUsageAnalysis(context: vscode.ExtensionContext) {
 }
 
 function showSessionsView(context: vscode.ExtensionContext) {
-  SessionsViewProvider.createPanel(context, allSessions);
+  SessionsViewProvider.createPanel(context, allSessions, getLiveSessions(), liveBudgetConfig);
   refresh(getEnabledProviders()).then(() => {
-    SessionsViewProvider.createPanel(context, allSessions);
+    SessionsViewProvider.createPanel(context, allSessions, getLiveSessions(), liveBudgetConfig);
   });
 }
 
@@ -365,4 +410,34 @@ function showPromptHistory(context: vscode.ExtensionContext) {
 async function showPricing(context: vscode.ExtensionContext) {
   if (!latestMetrics) { await refresh(getEnabledProviders()); }
   PricingViewProvider.createPanel(context, latestMetrics ?? undefined, connectedGitHubUser);
+}
+
+function getLiveSessions() {
+  const windowTokens = latestMetrics?.currentMonth.totalTokens ?? 0;
+  const windowCost = latestMetrics?.currentMonth.estimatedCost ?? 0;
+  return detectLiveSessions(allSessions, liveBudgetConfig, windowCost, windowTokens);
+}
+
+async function handleLogRateLimitHit(
+  context: vscode.ExtensionContext,
+  provider: import('./types').ProviderId,
+  note: string,
+) {
+  const event: RateLimitEvent = {
+    timestamp: new Date().toISOString(),
+    provider,
+    note: note || undefined,
+  };
+  rateLimitEvents = [...rateLimitEvents, event].slice(-100); // keep last 100
+  await context.globalState.update(RATE_LIMIT_EVENTS_KEY, rateLimitEvents);
+  vscode.window.showInformationMessage(`Rate limit event logged for ${provider}.`);
+}
+
+async function handleSaveLiveBudgetConfig(
+  context: vscode.ExtensionContext,
+  cfg: LiveBudgetConfig,
+) {
+  liveBudgetConfig = cfg;
+  await context.globalState.update(LIVE_BUDGET_CONFIG_KEY, cfg);
+  vscode.window.showInformationMessage('Live budget config saved.');
 }

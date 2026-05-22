@@ -99,6 +99,29 @@ export class ClaudeCodeProvider extends BaseProvider {
             seenMessageIds.add(msgId);
           }
 
+          // Tool calls live in message.content as type:"tool_use" blocks
+          const toolCalls: string[] = [];
+          const fileAccesses: Array<{ tool: string; path: string }> = [];
+          const msgContent: unknown = entry.message?.content;
+          if (Array.isArray(msgContent)) {
+            for (const block of msgContent as any[]) {
+              if (block?.type === 'tool_use') {
+                const name: string = block.name || 'unknown';
+                toolCalls.push(name);
+                const fp: unknown = block.input?.file_path ?? block.input?.notebook_path;
+                if (typeof fp === 'string' && fp) {
+                  fileAccesses.push({ tool: name, path: fp });
+                }
+              }
+            }
+          }
+          // Fallback for alternative formats
+          if (toolCalls.length === 0) {
+            for (const t of (entry.tool_calls || entry.toolCalls || [])) {
+              toolCalls.push((t as any).name || (t as any).function?.name || 'unknown');
+            }
+          }
+
           interactions.push({
             timestamp: ts,
             model: model,
@@ -108,7 +131,8 @@ export class ClaudeCodeProvider extends BaseProvider {
             cacheWriteTokens,
             totalTokens: inputTokens + outputTokens + thinkingTokens + cacheReadTokens + cacheWriteTokens,
             mode: entry.type || entry.role || entry.message?.role || 'chat',
-            toolCalls: (entry.tool_calls || entry.toolCalls || []).map((t: any) => t.name || t.function?.name || 'unknown'),
+            toolCalls,
+            fileAccesses: fileAccesses.length > 0 ? fileAccesses : undefined,
             promptPreview: pendingUserPreview,
           });
           pendingUserPreview = undefined; // consumed by first assistant turn after this user message

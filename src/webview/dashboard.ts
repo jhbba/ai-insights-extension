@@ -5,7 +5,7 @@ import * as vscode from 'vscode';
 import { AggregatedMetrics, RepositoryHygieneReport, FileStatus, AcceptanceMetrics } from '../types';
 import { ConnectedGitHubUser } from '../core/githubAuth';
 import { providerIcon } from './providerIcons';
-import { navCss, navTopbarHtml, navPagebarHtml, navFilterbarHtml } from './navShared';
+import { navCss, navTopbarHtml, navPagebarHtml, navFilterbarHtml, navJs, NAV_COMMANDS } from './navShared';
 
 interface RoiConfig { hourlyRate: number; tokensPerHourSaved: number; }
 
@@ -197,20 +197,16 @@ export class DashboardProvider {
 
     panel.webview.onDidReceiveMessage(
       (message) => {
+        // Route shared nav commands via NAV_COMMANDS first
+        const navCmd = NAV_COMMANDS[message.command];
+        if (navCmd) { vscode.commands.executeCommand(navCmd); return; }
+
         switch (message.command) {
           case 'refresh':
             vscode.commands.executeCommand('aiInsights.refresh').then(() => {
               vscode.commands.executeCommand('aiInsights.showDashboard');
             });
             break;
-          case 'showCharts': vscode.commands.executeCommand('aiInsights.showCharts'); break;
-          case 'showDiagnostics': vscode.commands.executeCommand('aiInsights.showDiagnostics'); break;
-          case 'showUsageAnalysis': vscode.commands.executeCommand('aiInsights.showUsageAnalysis'); break;
-          case 'showSessions': vscode.commands.executeCommand('aiInsights.showSessions'); break;
-          case 'showSessionsView': vscode.commands.executeCommand('aiInsights.showSessions'); break;
-          case 'showPricing': vscode.commands.executeCommand('aiInsights.showPricing'); break;
-          case 'showPromptHistory': vscode.commands.executeCommand('aiInsights.showPromptHistory'); break;
-          case 'showTokenCalculator': vscode.commands.executeCommand('aiInsights.showTokenCalculator'); break;
           case 'connectGitHub': vscode.commands.executeCommand('aiInsights.connectGitHub'); break;
           case 'disconnectGitHub': vscode.commands.executeCommand('aiInsights.disconnectGitHub'); break;
         }

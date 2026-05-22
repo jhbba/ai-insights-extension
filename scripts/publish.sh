@@ -1,0 +1,1 @@
+npm run package && npx @vscode/vsce package

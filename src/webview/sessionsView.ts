@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
-import { Session } from '../types';
+import { LiveBudgetConfig, LiveSessionState, Session } from '../types';
 import { PROVIDER_ICONS } from './providerIcons';
-import { computeContextRotScore, ContextRotScore } from '../core/contextRot';
+import { computeContextRotScore, computeContextRotAnalysis, ContextRotScore } from '../core/contextRot';
 import { navCss, navTopbarHtml, navPagebarHtml, navJs, NAV_COMMANDS } from './navShared';
 
 type SessionRow = {
@@ -30,14 +30,27 @@ type SessionRow = {
 export class SessionsViewProvider {
   static readonly viewType = 'aiInsights.sessionsView';
   private static currentPanel: vscode.WebviewPanel | undefined;
+  /** Latest session list, kept in sync for on-demand analysis requests. */
+  private static _sessions: Session[] = [];
+  /** True while the analyze overlay is open — skip HTML replacement to preserve it. */
+  private static _overlayOpen = false;
+  /** Pending update to apply once overlay closes. */
+  private static _pendingUpdate: (() => void) | null = null;
 
-  static createPanel(context: vscode.ExtensionContext, sessions: Session[], refreshing = false): vscode.WebviewPanel {
+  static createPanel(
+    context: vscode.ExtensionContext,
+    sessions: Session[],
+    liveSessions: LiveSessionState[] = [],
+    budgetConfig: LiveBudgetConfig | null = null,
+    refreshing = false,
+  ): vscode.WebviewPanel {
+    SessionsViewProvider._sessions = sessions;
     const rows = SessionsViewProvider.toRows(sessions);
     const logoPath = vscode.Uri.joinPath(context.extensionUri, 'assets', 'logo.png');
 
     if (SessionsViewProvider.currentPanel) {
       const logoUri = SessionsViewProvider.currentPanel.webview.asWebviewUri(logoPath).toString();
-      SessionsViewProvider.currentPanel.webview.html = SessionsViewProvider.buildHtml(rows, refreshing, logoUri);
+      SessionsViewProvider.currentPanel.webview.html = SessionsViewProvider.buildHtml(rows, liveSessions, budgetConfig, refreshing, logoUri);
       SessionsViewProvider.currentPanel.reveal(vscode.ViewColumn.One);
       return SessionsViewProvider.currentPanel;
     }
@@ -53,7 +66,7 @@ export class SessionsViewProvider {
       }
     );
     const logoUri = panel.webview.asWebviewUri(logoPath).toString();
-    panel.webview.html = SessionsViewProvider.buildHtml(rows, refreshing, logoUri);
+    panel.webview.html = SessionsViewProvider.buildHtml(rows, liveSessions, budgetConfig, refreshing, logoUri);
 
     panel.webview.onDidReceiveMessage(
       (message) => {
@@ -61,6 +74,31 @@ export class SessionsViewProvider {
         if (navCmd) { vscode.commands.executeCommand(navCmd); return; }
         if (message.command === 'refresh') {
           vscode.commands.executeCommand('aiInsights.showSessionsView');
+        } else if (message.command === 'requestSessionAnalysis' && message.sessionId) {
+          const sess = SessionsViewProvider._sessions.find(s => s.id === message.sessionId);
+          if (sess) {
+            const analysis = computeContextRotAnalysis(sess);
+            const detail = {
+              id: sess.id,
+              workspace: sess.workspace || '',
+              interactions: sess.interactions.map(i => ({
+                ts: i.timestamp instanceof Date ? i.timestamp.toISOString() : String(i.timestamp),
+                model: i.model || '',
+                mode: i.mode || '',
+                inputTokens: i.inputTokens,
+                outputTokens: i.outputTokens,
+                thinkingTokens: i.thinkingTokens,
+                cacheReadTokens: i.cacheReadTokens,
+                cacheWriteTokens: i.cacheWriteTokens,
+                toolCalls: i.toolCalls || [],
+                fileAccesses: i.fileAccesses || [],
+                promptPreview: i.promptPreview || '',
+              })),
+            };
+            panel.webview.postMessage({ command: 'sessionAnalysis', analysis, detail });
+          } else {
+            panel.webview.postMessage({ command: 'sessionAnalysis', analysis: null, detail: null });
+          }
         } else if (message.command === 'openSession' && message.sourceFile) {
           vscode.workspace.openTextDocument(vscode.Uri.file(message.sourceFile))
             .then(doc => vscode.window.showTextDocument(doc))
@@ -68,6 +106,14 @@ export class SessionsViewProvider {
         } else if (message.command === 'exportSessions' && message.csv) {
           vscode.workspace.openTextDocument({ content: message.csv, language: 'csv' })
             .then(doc => vscode.window.showTextDocument(doc, vscode.ViewColumn.Two));
+        } else if (message.command === 'overlayOpened') {
+          SessionsViewProvider._overlayOpen = true;
+        } else if (message.command === 'overlayClosed') {
+          SessionsViewProvider._overlayOpen = false;
+          if (SessionsViewProvider._pendingUpdate) {
+            SessionsViewProvider._pendingUpdate();
+            SessionsViewProvider._pendingUpdate = null;
+          }
         }
       },
       undefined,
@@ -80,6 +126,36 @@ export class SessionsViewProvider {
 
     SessionsViewProvider.currentPanel = panel;
     return panel;
+  }
+
+  /** Push updated live/session data without stealing focus from the user. */
+  static pushUpdate(
+    context: vscode.ExtensionContext,
+    sessions: Session[],
+    liveSessions: LiveSessionState[] = [],
+    budgetConfig: LiveBudgetConfig | null = null,
+    refreshing = false,
+  ): void {
+    SessionsViewProvider._sessions = sessions;
+    if (!SessionsViewProvider.currentPanel) { return; }
+    const doUpdate = () => {
+      if (!SessionsViewProvider.currentPanel) { return; }
+      const logoPath = vscode.Uri.joinPath(context.extensionUri, 'assets', 'logo.png');
+      const logoUri = SessionsViewProvider.currentPanel.webview.asWebviewUri(logoPath).toString();
+      const rows = SessionsViewProvider.toRows(SessionsViewProvider._sessions);
+      SessionsViewProvider.currentPanel.webview.html = SessionsViewProvider.buildHtml(
+        rows,
+        liveSessions,
+        budgetConfig,
+        refreshing,
+        logoUri,
+      );
+    };
+    if (SessionsViewProvider._overlayOpen) {
+      SessionsViewProvider._pendingUpdate = doUpdate;
+    } else {
+      doUpdate();
+    }
   }
 
   private static toRows(sessions: Session[]): SessionRow[] {
@@ -112,7 +188,13 @@ export class SessionsViewProvider {
       });
   }
 
-  static buildHtml(rows: SessionRow[], refreshing = false, logoUri = ''): string {
+  static buildHtml(
+    rows: SessionRow[],
+    liveSessions: LiveSessionState[] = [],
+    budgetConfig: LiveBudgetConfig | null = null,
+    refreshing = false,
+    logoUri = '',
+  ): string {
     const safe = JSON.stringify(rows).replace(/<\/script>/gi, '<\\/script>');
     const parts: string[] = [];
 
@@ -209,6 +291,117 @@ export class SessionsViewProvider {
     parts.push('.pagination button:hover:not([disabled]){background:rgba(255,255,255,0.05);border-color:var(--primary);}');
     parts.push('.pagination button[disabled]{opacity:0.3;cursor:default;}');
     parts.push('.page-info{font-size:0.85em;color:var(--text-secondary);}');
+    parts.push('.live-header{display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;}');
+    parts.push('.live-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#39FF14;box-shadow:0 0 6px rgba(57,255,20,0.6);animation:pulse-dot 1.4s ease-in-out infinite;}');
+    parts.push('@keyframes pulse-dot{0%,100%{opacity:1}50%{opacity:0.3}}');
+    parts.push('.live-badge{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;background:rgba(57,255,20,0.08);border:1px solid rgba(57,255,20,0.2);border-radius:20px;font-size:0.8em;font-weight:600;color:#39FF14;}');
+    parts.push('.live-updated{margin-left:auto;font-size:0.75em;color:rgba(193,198,215,0.48);}');
+    parts.push('.active-sessions{margin-bottom:24px;}');
+    parts.push('.active-sessions-title{font-size:1em;font-weight:600;margin-bottom:16px;}');
+    parts.push('.session-card{background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;padding:20px 24px;margin-bottom:16px;position:relative;overflow:hidden;}');
+    parts.push('.session-card.is-stale{border-color:rgba(255,59,48,0.35);}');
+    parts.push('.session-card.is-warn{border-color:rgba(255,159,10,0.28);}');
+    parts.push('.session-card.is-ok{border-color:rgba(57,255,20,0.18);}');
+    parts.push('.session-card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px;}');
+    parts.push('.session-card-title{font-size:0.95em;font-weight:600;display:flex;align-items:center;gap:8px;min-width:0;}');
+    parts.push('.session-card-title span:nth-child(2){overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}');
+    parts.push('.provider-chip{font-size:0.75em;padding:2px 8px;border-radius:4px;font-weight:500;white-space:nowrap;}');
+    parts.push('.metrics-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:16px;}');
+    parts.push('.metric-box{background:var(--bg-surface-high);border-radius:6px;padding:12px 14px;}');
+    parts.push('.metric-label{font-size:0.7em;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);font-weight:600;margin-bottom:6px;}');
+    parts.push('.metric-value{font-size:1.4em;font-weight:600;font-family:var(--font-data);color:var(--text-primary);}');
+    parts.push('.metric-sub{font-size:0.72em;color:var(--text-secondary);margin-top:3px;}');
+    parts.push('.metric-value.warn{color:#FF9F0A;}');
+    parts.push('.metric-value.crit{color:#FF3B30;}');
+    parts.push('.metric-value.ok{color:#39FF14;}');
+    parts.push('.burn-bar-wrap{margin-bottom:16px;}');
+    parts.push('.burn-bar-label{display:flex;justify-content:space-between;gap:12px;font-size:0.78em;color:var(--text-secondary);margin-bottom:5px;flex-wrap:wrap;}');
+    parts.push('.burn-bar{height:8px;background:rgba(255,255,255,0.06);border-radius:4px;overflow:hidden;}');
+    parts.push('.burn-fill{height:100%;border-radius:4px;transition:width 0.4s ease;}');
+    parts.push('.burn-fill.ok{background:linear-gradient(90deg,#39FF14,#00c864);}');
+    parts.push('.burn-fill.warn{background:linear-gradient(90deg,#FF9F0A,#FFD60A);}');
+    parts.push('.burn-fill.crit{background:linear-gradient(90deg,#FF3B30,#FF6B6B);}');
+    parts.push('.alerts-list{margin-top:12px;}');
+    parts.push('.alert-item{display:flex;align-items:flex-start;gap:8px;padding:8px 12px;border-radius:6px;font-size:0.83em;margin-bottom:6px;}');
+    parts.push('.alert-item.warning{background:rgba(255,159,10,0.08);border:1px solid rgba(255,159,10,0.2);color:#FF9F0A;}');
+    parts.push('.alert-item.error{background:rgba(255,59,48,0.08);border:1px solid rgba(255,59,48,0.2);color:#FF3B30;}');
+    parts.push('.session-card-collapse{background:transparent;border:1px solid var(--border);color:var(--text-secondary);padding:2px 7px;border-radius:3px;cursor:pointer;font-size:0.78em;line-height:1.4;transition:all 0.2s;flex-shrink:0;}');
+    parts.push('.session-card-collapse:hover{border-color:rgba(255,255,255,0.15);color:var(--text-primary);}');
+    parts.push('.session-card.is-collapsed .session-card-collapse{color:var(--primary);}');
+    parts.push('.session-card-body{transition:none;}');
+    parts.push('.session-card.is-collapsed .session-card-body{display:none;}');
+    parts.push('.session-card-mini{display:none;font-size:0.78em;color:var(--text-secondary);font-family:var(--font-data);gap:14px;flex-wrap:wrap;padding:2px 0;}');
+    parts.push('.session-card.is-collapsed .session-card-mini{display:flex;}');
+
+    // Analyze overlay
+    parts.push('.analyze-overlay{position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,0.72);display:none;}');
+    parts.push('.analyze-panel{position:absolute;top:0;right:0;bottom:0;width:min(940px,94vw);background:var(--bg-base);border-left:1px solid var(--border);overflow-y:auto;display:flex;flex-direction:column;}');
+    parts.push('.analyze-hdr{display:flex;align-items:center;gap:12px;padding:13px 22px;border-bottom:1px solid var(--border);background:var(--bg-surface-high);position:sticky;top:0;z-index:1;}');
+    parts.push('.analyze-hdr-title{flex:1;font-size:0.93em;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}');
+    parts.push('.analyze-close{background:transparent;border:1px solid var(--border);color:var(--text-secondary);width:26px;height:26px;border-radius:4px;cursor:pointer;font-size:1em;line-height:1;display:flex;align-items:center;justify-content:center;transition:all 0.15s;flex-shrink:0;}');
+    parts.push('.analyze-close:hover{border-color:rgba(255,255,255,0.2);color:var(--text-primary);}');
+    parts.push('.analyze-body{flex:1;padding:20px 24px;}');
+    parts.push('.ov-score-hdr{display:flex;align-items:center;gap:14px;margin-bottom:20px;flex-wrap:wrap;}');
+    parts.push('.ov-score-ring{width:64px;height:64px;flex-shrink:0;position:relative;}');
+    parts.push('.ov-score-ring canvas{position:absolute;top:0;left:0;}');
+    parts.push('.ov-score-ring-val{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:var(--font-data);font-size:1.2em;font-weight:700;}');
+    parts.push('.ov-section{background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;padding:16px 20px;margin-bottom:14px;}');
+    parts.push('.ov-section-title{font-size:1em;font-weight:600;margin-bottom:3px;}');
+    parts.push('.ov-section-sub{font-size:0.85em;color:var(--text-secondary);margin-bottom:12px;}');
+    parts.push('.ov-chart-wrap{height:190px;position:relative;}');
+    parts.push('.ov-signal-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(195px,1fr));gap:7px;}');
+    parts.push('.ov-signal-card{border-radius:6px;padding:9px 11px;border:1px solid transparent;}');
+    parts.push('.ov-signal-card.low{background:rgba(0,122,255,0.06);border-color:rgba(0,122,255,0.15);}');
+    parts.push('.ov-signal-card.medium{background:rgba(255,159,10,0.08);border-color:rgba(255,159,10,0.2);}');
+    parts.push('.ov-signal-card.high{background:rgba(255,59,48,0.08);border-color:rgba(255,59,48,0.22);}');
+    parts.push('.ov-sig-msg{font-size:0.82em;font-weight:600;margin-bottom:2px;}');
+    parts.push('.ov-sig-msg.low{color:var(--primary);}.ov-sig-msg.medium{color:#FF9F0A;}.ov-sig-msg.high{color:#FF3B30;}');
+    parts.push('.ov-sig-detail{font-size:0.75em;color:var(--text-secondary);line-height:1.4;}');
+    parts.push('.ov-ctx-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-bottom:10px;}');
+    parts.push('.ov-ctx-stat{background:var(--bg-surface-high);border-radius:6px;padding:9px;text-align:center;}');
+    parts.push('.ov-ctx-val{font-family:var(--font-data);font-size:1.05em;font-weight:700;margin-bottom:2px;}');
+    parts.push('.ov-ctx-lbl{font-size:0.67em;color:var(--text-secondary);}');
+    parts.push('.ov-ctx-bar{height:6px;border-radius:3px;background:rgba(255,255,255,0.05);overflow:hidden;display:flex;margin-bottom:6px;}');
+    parts.push('.ov-ctx-legend{display:flex;gap:10px;flex-wrap:wrap;font-size:0.69em;color:var(--text-secondary);}');
+    parts.push('.ov-restart-banner{display:flex;gap:8px;background:rgba(255,59,48,0.08);border:1px solid rgba(255,59,48,0.25);border-radius:7px;padding:9px 13px;margin-bottom:12px;font-size:0.82em;color:#FF3B30;}');
+    parts.push('.ov-file-list{display:flex;flex-direction:column;gap:2px;}');
+    parts.push('.ov-file-row{display:flex;align-items:center;gap:7px;padding:5px 9px;background:var(--bg-surface-high);border-radius:5px;min-width:0;}');
+    parts.push('.ov-file-path{font-size:0.77em;font-family:var(--font-data);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0;}');
+    parts.push('.ov-file-badges{display:flex;gap:3px;flex-shrink:0;}');
+    parts.push('.ov-fb{font-size:0.62em;padding:1px 4px;border-radius:2px;font-family:var(--font-data);}');
+    parts.push('.ov-fb-read{background:rgba(0,122,255,0.12);color:#007AFF;}.ov-fb-edit{background:rgba(255,159,10,0.12);color:#FF9F0A;}.ov-fb-write{background:rgba(57,255,20,0.12);color:#39FF14;}');
+    parts.push('.ov-file-summary{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:11px;}');
+    parts.push('.ov-fss{background:var(--bg-surface-high);border-radius:6px;padding:7px 11px;display:flex;flex-direction:column;align-items:center;min-width:68px;}');
+    parts.push('.ov-fss-val{font-family:var(--font-data);font-size:1.05em;font-weight:700;margin-bottom:1px;}');
+    parts.push('.ov-fss-lbl{font-size:0.65em;color:var(--text-secondary);}');
+    parts.push('.ov-itl-list{display:flex;flex-direction:column;gap:2px;}');
+    parts.push('.ov-itl-row{display:flex;gap:8px;padding:6px 10px;background:var(--bg-surface-high);border-radius:6px;}');
+    parts.push('.ov-itl-idx{font-family:var(--font-data);font-size:0.76em;color:var(--text-secondary);min-width:22px;padding-top:2px;flex-shrink:0;}');
+    parts.push('.ov-itl-body{flex:1;min-width:0;}');
+    parts.push('.ov-itl-meta{display:flex;align-items:center;gap:5px;margin-bottom:2px;flex-wrap:wrap;}');
+    parts.push('.ov-itl-time{font-size:0.76em;color:var(--text-secondary);flex-shrink:0;}');
+    parts.push('.ov-itl-mode{font-size:0.72em;padding:1px 4px;background:rgba(0,122,255,0.12);border-radius:3px;color:var(--primary);flex-shrink:0;}');
+    parts.push('.ov-itl-prompt{font-size:0.88em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}');
+    parts.push('.ov-itl-tools{display:flex;flex-wrap:wrap;gap:2px;margin-bottom:3px;}');
+    parts.push('.ov-itl-tool{font-size:0.72em;padding:1px 5px;background:rgba(240,147,251,0.1);border-radius:3px;color:#f093fb;font-family:var(--font-data);}');
+    parts.push('.ov-itl-tool-fname{opacity:0.7;margin-left:3px;}');
+    parts.push('.ov-itl-toks{display:flex;gap:7px;flex-wrap:wrap;}');
+    parts.push('.ov-tok{font-size:0.82em;font-family:var(--font-data);}');
+    parts.push('.ov-tok-i{color:#007AFF;}.ov-tok-o{color:#39FF14;}.ov-tok-c{color:#FF9F0A;}.ov-tok-t{color:#f093fb;}.ov-tok-w{color:var(--text-secondary);}');
+    parts.push('.ov-brief-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px;}');
+    parts.push('.ov-brief-box{background:var(--bg-surface-high);border-radius:6px;padding:11px 13px;}');
+    parts.push('.ov-brief-lbl{font-size:0.78em;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);font-weight:600;margin-bottom:6px;}');
+    parts.push('.ov-brief-text{font-size:0.9em;line-height:1.5;}');
+    parts.push('.ov-brief-tag{display:inline-block;padding:1px 6px;background:rgba(0,122,255,0.1);border-radius:3px;font-size:0.85em;color:var(--primary);font-family:var(--font-data);margin:2px 1px 2px 0;}');
+    parts.push('.ov-warn-tag{background:rgba(255,59,48,0.1);color:#FF3B30;}');
+    parts.push('.ov-checklist{list-style:none;display:flex;flex-direction:column;gap:5px;}');
+    parts.push('.ov-checklist li{display:flex;gap:7px;font-size:0.82em;line-height:1.5;}');
+    parts.push('.ov-checklist li::before{content:"\\2610";flex-shrink:0;color:var(--text-secondary);}');
+    parts.push('.ov-itl-skip{font-size:0.71em;color:var(--text-secondary);padding:4px 10px;text-align:center;border:1px dashed rgba(255,255,255,0.08);border-radius:5px;margin-bottom:3px;}');
+    parts.push('.ov-no-signals{font-size:0.82em;color:var(--text-secondary);padding:9px;text-align:center;}');
+    parts.push('.ov-heavy-tool{display:inline-block;margin:2px;padding:2px 7px;background:rgba(240,147,251,0.1);border-radius:3px;font-size:0.75em;color:#f093fb;font-family:var(--font-data);}');
+    parts.push('.ov-fragment-list{display:flex;flex-direction:column;gap:3px;}');
+    parts.push('.ov-fragment-item{font-size:0.77em;font-family:var(--font-data);padding:3px 7px;background:var(--bg-surface-high);border-radius:4px;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}');
     parts.push('</style></head><body>');
 
     parts.push(navTopbarHtml(logoUri, true, refreshing));
@@ -218,6 +411,7 @@ export class SessionsViewProvider {
     }
     parts.push(navPagebarHtml('sessions', 'Sessions'));
     parts.push('<div class="ns-content">');
+    parts.push(buildActiveSessionsWidget(liveSessions, budgetConfig));
     parts.push('<div style="display:flex;align-items:center;gap:8px;margin-bottom:20px;">');
     parts.push('  <button class="btn" id="exportBtn" style="height:32px;">&#8615; Export CSV</button>');
     parts.push('</div>');
@@ -277,6 +471,17 @@ export class SessionsViewProvider {
     parts.push('<div class="footer">Deep session analysis for AI-assisted development. Data updated in real-time.</div>');
     parts.push('</div><!-- /ns-content -->');
 
+    // Overlay must be in the DOM before scripts execute so getElementById succeeds
+    parts.push('<div class="analyze-overlay" id="analyzeOverlay">');
+    parts.push('  <div class="analyze-panel">');
+    parts.push('    <div class="analyze-hdr">');
+    parts.push('      <span class="analyze-hdr-title" id="ovHdrTitle"></span>');
+    parts.push('      <button class="analyze-close" onclick="closeAnalyzeOverlay()" title="Close">&#215;</button>');
+    parts.push('    </div>');
+    parts.push('    <div class="analyze-body" id="ovBody"></div>');
+    parts.push('  </div>');
+    parts.push('</div>');
+
     parts.push('<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>');
     parts.push('<script>window.__SESSIONS__=');
     parts.push(safe);
@@ -286,6 +491,8 @@ export class SessionsViewProvider {
     parts.push('(function(){');
     parts.push('  var vscode=acquireVsCodeApi();');
     parts.push('  window.vscode=vscode;');
+    parts.push('  var lastEl=document.getElementById("lastUpdateTime");');
+    parts.push('  if(lastEl){lastEl.textContent=new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",second:"2-digit"});}');
     parts.push('  var ALL_SESSIONS=window.__SESSIONS__||[];');
     parts.push('  var sortKey="startTime";');
     parts.push('  var sortDir=-1;');
@@ -317,6 +524,179 @@ export class SessionsViewProvider {
 
     parts.push('  function openSession(idx){var s=currentFiltered[idx];if(s&&s.sourceFile)vscode.postMessage({command:"openSession",sourceFile:s.sourceFile});}');
     parts.push('  window.openSession=openSession;');
+
+    // ── Analyze overlay ────────────────────────────────────────────────────────
+    parts.push('  var _ovChart=null,_ovRingChart=null,_ovPending=null;');
+    parts.push('  function analyzeSession(idx){');
+    parts.push('    var s=currentFiltered[idx];if(!s)return;');
+    parts.push('    _ovPending=s;');
+    parts.push('    var ov=document.getElementById("analyzeOverlay");');
+    parts.push('    var hdr=document.getElementById("ovHdrTitle");');
+    parts.push('    var body=document.getElementById("ovBody");');
+    parts.push('    if(!ov||!hdr||!body)return;');
+    parts.push('    if(_ovChart){_ovChart.destroy();_ovChart=null;}');
+    parts.push('    if(_ovRingChart){_ovRingChart.destroy();_ovRingChart=null;}');
+    parts.push('    hdr.textContent=(s.title||s.id.slice(0,20))+" — Context Analysis";');
+    parts.push('    body.innerHTML=\'<div style="display:flex;align-items:center;justify-content:center;height:120px;gap:10px;color:var(--text-secondary)"><span class="loading-spinner"></span>Loading analysis…</div>\';');
+    parts.push('    ov.style.display="block";document.body.style.overflow="hidden";');
+    parts.push('    vscode.postMessage({command:"overlayOpened"});');
+    parts.push('    vscode.postMessage({command:"requestSessionAnalysis",sessionId:s.id});');
+    parts.push('  }');
+    parts.push('  window.analyzeSession=analyzeSession;');
+    parts.push('  window.addEventListener("message",function(event){');
+    parts.push('    var msg=event.data;');
+    parts.push('    if(msg.command!=="sessionAnalysis"||!_ovPending)return;');
+    parts.push('    var s=_ovPending;_ovPending=null;');
+    parts.push('    var body=document.getElementById("ovBody");if(!body)return;');
+    parts.push('    var a=msg.analysis,det=msg.detail;');
+    parts.push('    body.innerHTML=buildOvHtml(a,s,det);');
+    parts.push('    if(a){renderOvRing(a.score,a.label);renderOvChart(a);}');
+    parts.push('  });');
+    parts.push('  window.closeAnalyzeOverlay=function(){');
+    parts.push('    var ov=document.getElementById("analyzeOverlay");if(ov)ov.style.display="none";');
+    parts.push('    document.body.style.overflow="";');
+    parts.push('    if(_ovChart){_ovChart.destroy();_ovChart=null;}');
+    parts.push('    if(_ovRingChart){_ovRingChart.destroy();_ovRingChart=null;}');
+    parts.push('    vscode.postMessage({command:"overlayClosed"});');
+    parts.push('  };');
+    parts.push('  document.getElementById("analyzeOverlay").addEventListener("click",function(e){if(e.target===this)window.closeAnalyzeOverlay();});');
+    parts.push('  function buildOvHtml(a,s,det){');
+    parts.push('    if(!a)return\'<div class="ov-no-signals">No analysis available for this session.</div>\';');
+    parts.push('    var h="";');
+    parts.push('    var sc=a.label==="stale"?"#FF3B30":a.label==="warning"?"#FF9F0A":"#39FF14";');
+    parts.push('    h+=\'<div class="ov-score-hdr">\';');
+    parts.push('    h+=\'<div class="ov-score-ring"><canvas id="ovScoreRing" width="64" height="64"></canvas><div class="ov-score-ring-val" style="color:\'+sc+\'">\'+a.score+\'</div></div>\';');
+    parts.push('    h+=\'<div><div style="font-size:1em;font-weight:600;margin-bottom:4px;">\'+esc(s.title||s.id.slice(0,20))+\'</div>\';');
+    parts.push('    h+=\'<div style="font-size:0.8em;color:var(--text-secondary)">\'+esc(s.provider)+\' &middot; \'+new Date(s.startTime).toLocaleString()+\' &middot; \'+a.turnsCount+\' turns &middot; \'+Math.round(a.sessionAgeMinutes)+\' min</div></div></div>\';');
+    parts.push('    if(a.restartRecommended)h+=\'<div class="ov-restart-banner"><strong>Restart Recommended&ensp;</strong>\'+esc(a.restartReason)+\'</div>\';');
+    // Context Size
+    parts.push('    h+=\'<div class="ov-section"><div class="ov-section-title">Context Size</div><div class="ov-section-sub">Accumulated tokens and cache efficiency</div>\';');
+    parts.push('    if(det&&det.interactions&&det.interactions.length>0){');
+    parts.push('      var ix=det.interactions;');
+    parts.push('      var peakIn=Math.max.apply(null,ix.map(function(i){return i.inputTokens;}));');
+    parts.push('      var lastIn=ix[ix.length-1].inputTokens;');
+    parts.push('      var totCR=ix.reduce(function(s,i){return s+i.cacheReadTokens;},0);');
+    parts.push('      var totCW=ix.reduce(function(s,i){return s+i.cacheWriteTokens;},0);');
+    parts.push('      var hitPct=Math.round(ix.filter(function(i){return i.cacheReadTokens>0;}).length/ix.length*100);');
+    parts.push('      var totIn=ix.reduce(function(s,i){return s+i.inputTokens;},0);');
+    parts.push('      var totOut=ix.reduce(function(s,i){return s+i.outputTokens;},0);');
+    parts.push('      var totTh=ix.reduce(function(s,i){return s+i.thinkingTokens;},0);');
+    parts.push('      h+=\'<div class="ov-ctx-grid">\';');
+    parts.push('      h+=\'<div class="ov-ctx-stat"><div class="ov-ctx-val">\'+fmt(peakIn)+\'</div><div class="ov-ctx-lbl">Peak context</div></div>\';');
+    parts.push('      h+=\'<div class="ov-ctx-stat"><div class="ov-ctx-val">\'+fmt(lastIn)+\'</div><div class="ov-ctx-lbl">Last turn size</div></div>\';');
+    parts.push('      h+=\'<div class="ov-ctx-stat"><div class="ov-ctx-val">\'+hitPct+\'%</div><div class="ov-ctx-lbl">Cache hit rate</div></div>\';');
+    parts.push('      h+=\'<div class="ov-ctx-stat"><div class="ov-ctx-val">\'+fmt(totCR)+\'</div><div class="ov-ctx-lbl">From cache</div></div></div>\';');
+    parts.push('      var tf=totIn+totOut+(totTh||0);');
+    parts.push('      var ip=tf>0?Math.round(totIn/tf*100):50;var op=tf>0?Math.round(totOut/tf*100):50;var tp=tf>0?Math.round((totTh||0)/tf*100):0;');
+    parts.push('      h+=\'<div class="ov-ctx-bar"><div style="height:100%;background:#007AFF;width:\'+ip+\'%"></div><div style="height:100%;background:#39FF14;width:\'+op+\'%"></div><div style="height:100%;background:#f093fb;width:\'+tp+\'%"></div></div>\';');
+    parts.push('      h+=\'<div class="ov-ctx-legend"><span style="color:#007AFF">&#9632; Input \'+fmt(totIn)+\'</span><span style="color:#39FF14">&#9632; Output \'+fmt(totOut)+\'</span>\';');
+    parts.push('      if(totTh>0)h+=\'<span style="color:#f093fb">&#9632; Thinking \'+fmt(totTh)+\'</span>\';');
+    parts.push('      if(totCR>0)h+=\'<span style="color:#FF9F0A">&#9889; \'+fmt(totCR)+\' from cache</span>\';');
+    parts.push('      if(totCW>0)h+=\'<span>&#9999; \'+fmt(totCW)+\' cache writes</span>\';');
+    parts.push('      h+=\'</div>\';');
+    parts.push('    }else{h+=\'<div class="ov-no-signals">No token data.</div>\';}');
+    parts.push('    h+=\'</div>\';');
+    // Context Timeline
+    parts.push('    h+=\'<div class="ov-section"><div class="ov-section-title">Context Timeline</div><div class="ov-section-sub">Input growth, output trend, and tool activity per turn</div><div class="ov-chart-wrap"><canvas id="ovTimelineChart"></canvas></div></div>\';');
+    // Files in Context
+    parts.push('    h+=\'<div class="ov-section"><div class="ov-section-title">Files in Context</div><div class="ov-section-sub">Files accumulated via Read, Edit, and Write tools</div>\';');
+    parts.push('    if(det&&det.interactions){');
+    parts.push('      var fm={};');
+    parts.push('      det.interactions.forEach(function(it){(it.fileAccesses||[]).forEach(function(fa){if(!fm[fa.path])fm[fa.path]={r:0,e:0,w:0};var t=fa.tool.toLowerCase();if(t==="edit"||t==="notebookedit")fm[fa.path].e++;else if(t==="write")fm[fa.path].w++;else fm[fa.path].r++;});});');
+    parts.push('      var fe=Object.keys(fm).map(function(p){return{path:p,c:fm[p]};});');
+    parts.push('      if(fe.length>0){');
+    parts.push('        var ws2=det.workspace||"";');
+    parts.push('        function relp(fp){if(ws2&&fp.startsWith(ws2))return fp.slice(ws2.length).replace(/^\\//,"");var pts=fp.split("/");return pts.length>2?"\\u2026/"+pts.slice(-2).join("/"):fp;}');
+    parts.push('        var frd=fe.filter(function(e){return e.c.r>0;}).length;var fed2=fe.filter(function(e){return e.c.e>0||e.c.w>0;}).length;');
+    parts.push('        h+=\'<div class="ov-file-summary">\';');
+    parts.push('        h+=\'<div class="ov-fss"><div class="ov-fss-val" style="color:#007AFF">\'+fe.length+\'</div><div class="ov-fss-lbl">unique files</div></div>\';');
+    parts.push('        h+=\'<div class="ov-fss"><div class="ov-fss-val" style="color:#007AFF">\'+frd+\'</div><div class="ov-fss-lbl">read into ctx</div></div>\';');
+    parts.push('        h+=\'<div class="ov-fss"><div class="ov-fss-val" style="color:#FF9F0A">\'+fed2+\'</div><div class="ov-fss-lbl">edited/written</div></div></div>\';');
+    parts.push('        fe.sort(function(a,b){var ae=a.c.e+a.c.w,be=b.c.e+b.c.w;return ae!==be?be-ae:(b.c.r+be)-(a.c.r+ae);});');
+    parts.push('        h+=\'<div class="ov-file-list">\';');
+    parts.push('        fe.slice(0,25).forEach(function(e){');
+    parts.push('          var ed=e.c.e>0||e.c.w>0;');
+    parts.push('          h+=\'<div class="ov-file-row"><span style="font-size:0.74em;flex-shrink:0;color:\'+( ed?"#FF9F0A":"#007AFF")+\'">\'+( ed?"\\u270f":"\\ud83d\\udcc4")+\'</span>\';');
+    parts.push('          h+=\'<span class="ov-file-path" title="\'+esc(e.path)+\'">\'+esc(relp(e.path))+\'</span><div class="ov-file-badges">\';');
+    parts.push('          if(e.c.r>0)h+=\'<span class="ov-fb ov-fb-read">read \'+e.c.r+\'</span>\';');
+    parts.push('          if(e.c.e>0)h+=\'<span class="ov-fb ov-fb-edit">edit \'+e.c.e+\'</span>\';');
+    parts.push('          if(e.c.w>0)h+=\'<span class="ov-fb ov-fb-write">write \'+e.c.w+\'</span>\';');
+    parts.push('          h+=\'</div></div>\';');
+    parts.push('        });');
+    parts.push('        if(fe.length>25)h+=\'<div style="font-size:0.72em;color:var(--text-secondary);padding:4px 8px">\'+( fe.length-25)+\' more files\\u2026</div>\';');
+    parts.push('        h+=\'</div>\';');
+    parts.push('      }else{h+=\'<div class="ov-no-signals">No file accesses recorded.</div>\';}');
+    parts.push('    }else{h+=\'<div class="ov-no-signals">No interaction data.</div>\';}');
+    parts.push('    h+=\'</div>\';');
+    // Overload Signals
+    parts.push('    h+=\'<div class="ov-section"><div class="ov-section-title">Overload Signals</div><div class="ov-section-sub">Patterns that degrade context quality</div>\';');
+    parts.push('    if(a.overloadSignals&&a.overloadSignals.length){');
+    parts.push('      h+=\'<div class="ov-signal-grid">\';');
+    parts.push('      a.overloadSignals.forEach(function(sig){h+=\'<div class="ov-signal-card \'+sig.severity+\'"><div class="ov-sig-msg \'+sig.severity+\'">\'+esc(sig.message)+\'</div><div class="ov-sig-detail">\'+esc(sig.detail)+\'</div></div>\';});');
+    parts.push('      h+=\'</div>\';');
+    parts.push('    }else{h+=\'<div class="ov-no-signals">No overload signals — session looks healthy.</div>\';}');
+    parts.push('    h+=\'</div>\';');
+    // Interaction Timeline
+    parts.push('    h+=\'<div class="ov-section"><div class="ov-section-title">Interaction Timeline</div><div class="ov-section-sub">Per-turn: prompt, tools called, and token flow</div>\';');
+    parts.push('    if(det&&det.interactions&&det.interactions.length>0){');
+    parts.push('      var iall=det.interactions;var sf2=iall.length>15?iall.length-15:0;');
+    parts.push('      h+=\'<div class="ov-itl-list">\';');
+    parts.push('      if(sf2>0)h+=\'<div class="ov-itl-skip">\\u2026 \'+sf2+\' earlier turns \\u2014 \'+iall.length+\' total</div>\';');
+    parts.push('      iall.slice(sf2).forEach(function(it,li){');
+    parts.push('        var ti=sf2+li;');
+    parts.push('        var tt=new Date(it.ts).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});');
+    parts.push('        h+=\'<div class="ov-itl-row"><div class="ov-itl-idx">T\'+ti+\'</div><div class="ov-itl-body">\';');
+    parts.push('        h+=\'<div class="ov-itl-meta"><span class="ov-itl-time">\'+tt+\'</span>\';');
+    parts.push('        if(it.mode)h+=\'<span class="ov-itl-mode">\'+esc(it.mode)+\'</span>\';');
+    parts.push('        if(it.promptPreview)h+=\'<span class="ov-itl-prompt">\'+esc(it.promptPreview.slice(0,100))+\'</span>\';');
+    parts.push('        h+=\'</div>\';');
+    parts.push('        if(it.toolCalls&&it.toolCalls.length){h+=\'<div class="ov-itl-tools">\';var faCopy=(it.fileAccesses||[]).slice();it.toolCalls.slice(0,12).forEach(function(t){var fi=-1;for(var k=0;k<faCopy.length;k++){if(faCopy[k].tool.toLowerCase()===t.toLowerCase()){fi=k;break;}}if(fi>=0){var fa=faCopy.splice(fi,1)[0];var bn=fa.path.split("/").pop()||fa.path;h+=\'<span class="ov-itl-tool">\'+esc(t)+\'<span class="ov-itl-tool-fname">\'+esc(bn)+\'</span></span>\';}else{h+=\'<span class="ov-itl-tool">\'+esc(t)+\'</span>\';}});if(it.toolCalls.length>12)h+=\'<span class="ov-itl-tool">+\'+(it.toolCalls.length-12)+\'</span>\';h+=\'</div>\';}');
+    parts.push('        h+=\'<div class="ov-itl-toks"><span class="ov-tok ov-tok-i" title="Input tokens">\\u2191 \'+fmt(it.inputTokens)+\'</span><span class="ov-tok ov-tok-o" title="Output tokens">\\u2193 \'+fmt(it.outputTokens)+\'</span>\';');
+    parts.push('        if(it.cacheReadTokens>0)h+=\'<span class="ov-tok ov-tok-c" title="Cache read tokens">\\u26a1 \'+fmt(it.cacheReadTokens)+\'</span>\';');
+    parts.push('        if(it.thinkingTokens>0)h+=\'<span class="ov-tok ov-tok-t" title="Thinking tokens">think \'+fmt(it.thinkingTokens)+\'</span>\';');
+    parts.push('        if(it.cacheWriteTokens>0)h+=\'<span class="ov-tok ov-tok-w" title="Cache write tokens">\\u270d \'+fmt(it.cacheWriteTokens)+\'</span>\';');
+    parts.push('        h+=\'</div></div></div>\';');
+    parts.push('      });');
+    parts.push('      h+=\'</div>\';');
+    parts.push('    }else{h+=\'<div class="ov-no-signals">No interaction data.</div>\';}');
+    parts.push('    h+=\'</div>\';');
+    // Fresh Session Brief
+    parts.push('    h+=\'<div class="ov-section"><div class="ov-section-title">Fresh Session Brief</div><div class="ov-section-sub">Rehydrate a new session if you restart</div><div class="ov-brief-grid">\';');
+    parts.push('    h+=\'<div class="ov-brief-box"><div class="ov-brief-lbl">Goal</div><div class="ov-brief-text">\'+esc(a.freshSessionBrief.goal||"\\u2014")+\'</div></div>\';');
+    parts.push('    h+=\'<div class="ov-brief-box"><div class="ov-brief-lbl">Next Action</div><div class="ov-brief-text">\'+esc(a.freshSessionBrief.nextAction||"\\u2014")+\'</div></div>\';');
+    parts.push('    h+=\'<div class="ov-brief-box"><div class="ov-brief-lbl">Write Ops</div><div class="ov-brief-text">\';');
+    parts.push('    if(a.freshSessionBrief.writeOperations&&a.freshSessionBrief.writeOperations.length){a.freshSessionBrief.writeOperations.forEach(function(t){h+=\'<span class="ov-brief-tag">\'+esc(t)+\'</span>\';});}else{h+=\'<em style="color:var(--text-secondary)">None</em>\';}');
+    parts.push('    h+=\'</div></div><div class="ov-brief-box"><div class="ov-brief-lbl">Warnings</div><div class="ov-brief-text">\';');
+    parts.push('    if(a.freshSessionBrief.warnings&&a.freshSessionBrief.warnings.length){a.freshSessionBrief.warnings.forEach(function(w){h+=\'<span class="ov-brief-tag ov-warn-tag">\'+esc(w)+\'</span>\';});}else{h+=\'<em style="color:var(--text-secondary)">None</em>\';}');
+    parts.push('    h+=\'</div></div></div></div>\';');
+    // Rehydration Checklist
+    parts.push('    h+=\'<div class="ov-section"><div class="ov-section-title">Rehydration Checklist</div><div class="ov-section-sub">Steps to start a fresh session with full context</div><ul class="ov-checklist">\';');
+    parts.push('    (a.rehydrationChecklist||[]).forEach(function(item){h+=\'<li>\'+esc(item)+\'</li>\';});');
+    parts.push('    h+=\'</ul></div>\';');
+    // Patterns
+    parts.push('    h+=\'<div class="ov-section"><div class="ov-section-title">Patterns</div><div class="ov-section-sub">Recurring tools and prompt fragments</div>\';');
+    parts.push('    var hadPat=false;');
+    parts.push('    if(a.heavyToolUsage&&a.heavyToolUsage.length){hadPat=true;h+=\'<div style="margin-bottom:9px"><div class="ov-section-sub" style="margin-bottom:5px">Heavy tool usage (3+ calls)</div>\';a.heavyToolUsage.slice(0,10).forEach(function(t){h+=\'<span class="ov-heavy-tool">\'+esc(t)+\'</span>\';});h+=\'</div>\';}');
+    parts.push('    if(a.repeatedPromptFragments&&a.repeatedPromptFragments.length){hadPat=true;h+=\'<div><div class="ov-section-sub" style="margin-bottom:5px">Repeated prompt fragments</div><div class="ov-fragment-list">\';a.repeatedPromptFragments.slice(0,6).forEach(function(f){h+=\'<div class="ov-fragment-item">\'+esc(f)+\'</div>\';});h+=\'</div></div>\';}');
+    parts.push('    if(!hadPat)h+=\'<div class="ov-no-signals">No repeated patterns detected.</div>\';');
+    parts.push('    h+=\'</div>\';');
+    parts.push('    return h;');
+    parts.push('  }');
+    // Chart renderers
+    parts.push('  function renderOvChart(a){');
+    parts.push('    var c=document.getElementById("ovTimelineChart");if(!c||!a.timeline||!a.timeline.length)return;');
+    parts.push('    var lbl=a.timeline.map(function(t){return"T"+t.turnIndex;});');
+    parts.push('    _ovChart=new Chart(c,{type:"bar",data:{labels:lbl,datasets:[');
+    parts.push('      {label:"Input",data:a.timeline.map(function(t){return t.inputTokens;}),backgroundColor:"rgba(0,122,255,0.5)",borderColor:"#007AFF",borderWidth:1,yAxisID:"y",order:2},');
+    parts.push('      {label:"Output",data:a.timeline.map(function(t){return t.outputTokens;}),backgroundColor:"rgba(57,255,20,0.5)",borderColor:"#39FF14",borderWidth:1,yAxisID:"y",order:2},');
+    parts.push('      {label:"Tool calls",data:a.timeline.map(function(t){return t.toolCallCount;}),type:"line",borderColor:"#f093fb",backgroundColor:"rgba(240,147,251,0.1)",borderWidth:2,pointRadius:3,pointBackgroundColor:"#f093fb",yAxisID:"y2",tension:0.3,order:1}');
+    parts.push('    ]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:"index",intersect:false},plugins:{legend:{display:true,position:"top",labels:{color:"#c1c6d7",boxWidth:10,padding:10,font:{size:11}}}},scales:{y:{beginAtZero:true,position:"left",grid:{color:"rgba(255,255,255,0.04)"},ticks:{color:"#007AFF",callback:function(v){return v>=1000?(v/1000).toFixed(0)+"K":v;}}},y2:{beginAtZero:true,position:"right",grid:{display:false},ticks:{color:"#f093fb",stepSize:1}},x:{grid:{display:false},ticks:{maxRotation:0,autoSkip:true,maxTicksLimit:20}}}}});');
+    parts.push('  }');
+    parts.push('  function renderOvRing(score,label){');
+    parts.push('    var c=document.getElementById("ovScoreRing");if(!c)return;');
+    parts.push('    var col=label==="stale"?"#FF3B30":label==="warning"?"#FF9F0A":"#39FF14";');
+    parts.push('    _ovRingChart=new Chart(c,{type:"doughnut",data:{datasets:[{data:[score,10-score],backgroundColor:[col,"rgba(255,255,255,0.05)"],borderWidth:0}]},options:{responsive:false,animation:{duration:400},plugins:{legend:{display:false},tooltip:{enabled:false}},cutout:"72%"}});');
+    parts.push('  }');
     parts.push('  function fmt(n){if(n>=1e6)return(n/1e6).toFixed(1)+"M";if(n>=1e3)return(n/1e3).toFixed(1)+"K";return String(n||0);}');
     parts.push('  function esc(s){return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}');
     parts.push('  function fmtDate(iso){var d=new Date(iso);var now=new Date();var today=new Date(now.getFullYear(),now.getMonth(),now.getDate());var day=new Date(d.getFullYear(),d.getMonth(),d.getDate());var diff=Math.round((today.getTime()-day.getTime())/86400000);var time=d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});if(diff===0)return"Today "+time;if(diff===1)return"Yesterday "+time;return d.toLocaleDateString([],{month:"short",day:"numeric"})+" "+time;}');
@@ -492,7 +872,8 @@ export class SessionsViewProvider {
     parts.push('      var mods=(s.models||[]).map(m=>"<span class=\\"model-tag\\">"+esc(m)+"</span>").join("")||"-";');
     parts.push('      var titleCell=s.title?"<span class=\\"title-cell\\" title=\\""+esc(s.title)+"\\">" +esc(s.title)+"</span>":"<span style=\\"opacity:0.3\\">-</span>";');
     parts.push('      var openBtn=s.sourceFile?"<button class=\\"btn-open\\" onclick=\\"openSession("+idx+")\\">Open</button>":"";');
-    parts.push('      return "<tr><td class=\\"data-text\\">"+fmtDate(s.startTime)+"</td><td>"+badge(s.provider,s.providerName)+"</td><td>"+titleCell+"</td><td><span class=\\"ws-cell\\" title=\\""+esc(s.workspace||"")+"\\">"+ esc(repo)+"</span></td><td class=\\"data-text\\" style=\\"font-weight:600\\">"+fmt(s.totalTokens)+"</td>"+breakdown(s)+costCell(s)+contextHealthCell(s)+"<td class=\\"data-text\\">"+s.interactions+"</td><td>"+mods+"</td><td class=\\"data-text\\" style=\\"color:var(--text-secondary)\\">"+fmtDur(s.startTime,s.endTime)+"</td><td>"+openBtn+"</td></tr>";');
+    parts.push('      var analyzeBtn="<button class=\\"btn-open\\" onclick=\\"analyzeSession("+idx+")\\" title=\\"Context Workbench\\">Analyze</button>";');
+    parts.push('      return "<tr><td class=\\"data-text\\">"+fmtDate(s.startTime)+"</td><td>"+badge(s.provider,s.providerName)+"</td><td>"+titleCell+"</td><td><span class=\\"ws-cell\\" title=\\""+esc(s.workspace||"")+"\\">"+ esc(repo)+"</span></td><td class=\\"data-text\\" style=\\"font-weight:600\\">"+fmt(s.totalTokens)+"</td>"+breakdown(s)+costCell(s)+contextHealthCell(s)+"<td class=\\"data-text\\">"+s.interactions+"</td><td>"+mods+"</td><td class=\\"data-text\\" style=\\"color:var(--text-secondary)\\">"+fmtDur(s.startTime,s.endTime)+"</td><td style=\\"white-space:nowrap\\">"+analyzeBtn+" "+openBtn+"</td></tr>";');
     parts.push('    }).join("");');
     parts.push('    var pgHtml=totalPages>1?"<div class=\\"pagination\\"><button onclick=\\"goToPage("+(currentPage-1)+")\\" "+(currentPage===0?"disabled":"")+">&#8592; Prev</button><span class=\\"page-info\\">Page "+(currentPage+1)+" of "+totalPages+" &middot; "+sessions.length+" sessions</span><button onclick=\\"goToPage("+(currentPage+1)+")\\" "+(currentPage>=totalPages-1?"disabled":"")+">Next &#8594;</button></div>":"";');
     parts.push('    var ctxHint="Context Health \\u24d8";');
@@ -512,4 +893,118 @@ export class SessionsViewProvider {
 
     return parts.join('');
   }
+}
+
+function buildActiveSessionsWidget(liveSessions: LiveSessionState[], budgetConfig: LiveBudgetConfig | null): string {
+  const parts: string[] = [];
+  parts.push('<div class="active-sessions">');
+  parts.push('<div class="live-header">');
+  if (liveSessions.length > 0) {
+    parts.push(`<span class="live-badge"><span class="live-dot"></span>${liveSessions.length} active session${liveSessions.length > 1 ? 's' : ''}</span>`);
+  } else {
+    parts.push('<span style="font-size:0.85em;color:var(--text-secondary);">No active sessions detected</span>');
+  }
+  parts.push('<span class="live-updated">Updated every 30 s &middot; <span id="lastUpdateTime">just now</span></span>');
+  parts.push('</div>');
+
+  if (liveSessions.length > 0) {
+    parts.push('<div class="active-sessions-title">Active Sessions</div>');
+    for (const session of liveSessions) {
+      parts.push(buildLiveSessionCard(session, budgetConfig));
+    }
+  }
+
+  parts.push('</div>');
+  return parts.join('');
+}
+
+function buildLiveSessionCard(sess: LiveSessionState, budget: LiveBudgetConfig | null): string {
+  const hasAlerts = sess.alerts.length > 0;
+  const hasError = sess.alerts.some(a => a.severity === 'error');
+  const cardClass = hasError ? 'is-stale' : hasAlerts ? 'is-warn' : 'is-ok';
+
+  const burnClass = sess.recentBurnRatePerMin > 6000
+    ? 'crit'
+    : sess.recentBurnRatePerMin > 2000
+      ? 'warn'
+      : 'ok';
+  const exhaustClass = sess.projectedExhaustionMinutes !== null
+    ? (sess.projectedExhaustionMinutes <= 15 ? 'crit' : sess.projectedExhaustionMinutes <= 60 ? 'warn' : 'ok')
+    : '';
+  const budgetPct = sess.budgetUsedPct;
+  const fillClass = budgetPct === null ? 'ok' : budgetPct >= 90 ? 'crit' : budgetPct >= 70 ? 'warn' : 'ok';
+  const fillWidth = budgetPct !== null ? Math.min(100, budgetPct).toFixed(1) : '0';
+
+  const miniSummary = `${formatLiveNumber(sess.currentTokens)} tokens · ${formatLiveNumber(sess.recentBurnRatePerMin)}/min · ${formatLiveMinutes(sess.elapsedMinutes)}`;
+
+  let html = `<div class="session-card ${cardClass} is-collapsed">`;
+  html += '<div class="session-card-header">';
+  html += `<div class="session-card-title"><span class="live-dot"></span><span>${escapeHtml(sess.sessionTitle || sess.sessionId)}</span><span class="provider-chip p-${sess.provider}">${escapeHtml(sess.provider)}</span></div>`;
+  html += `<div style="display:flex;align-items:center;gap:10px;margin-left:auto;">`;
+  html += `<span style="font-size:0.78em;color:var(--text-secondary);font-family:var(--font-data)">started ${new Date(sess.sessionStartTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>`;
+  html += `<button class="session-card-collapse" onclick="this.closest('.session-card').classList.toggle('is-collapsed')" title="Collapse / expand">&#8897;</button>`;
+  html += '</div>';
+  html += '</div>';
+
+  // One-line summary shown when collapsed
+  html += `<div class="session-card-mini"><span>${escapeHtml(miniSummary)}</span></div>`;
+
+  html += '<div class="session-card-body">';
+  html += '<div class="metrics-grid">';
+  html += liveMetric('Tokens Used', formatLiveNumber(sess.currentTokens), `${formatLiveNumber(sess.currentInputTokens)} in · ${formatLiveNumber(sess.currentOutputTokens)} out`);
+  html += liveMetric('Elapsed', formatLiveMinutes(sess.elapsedMinutes), '');
+  html += liveMetric('Burn Rate', `${formatLiveNumber(sess.recentBurnRatePerMin)}/min`, 'tokens per minute', burnClass);
+  if (sess.projectedExhaustionMinutes !== null) {
+    html += liveMetric(
+      'Budget Exhaustion',
+      sess.projectedExhaustionMinutes <= 0 ? 'Now' : formatLiveMinutes(sess.projectedExhaustionMinutes),
+      'at current burn rate',
+      exhaustClass,
+    );
+  }
+  if (sess.budgetWindowResetTime) {
+    const resetIn = (new Date(sess.budgetWindowResetTime).getTime() - Date.now()) / 60000;
+    html += liveMetric('Reset In', formatLiveMinutes(Math.max(0, resetIn)), 'budget window reset', resetIn < 30 ? 'warn' : '');
+  }
+  html += '</div>';
+
+  if (budget?.limitTokens && budgetPct !== null) {
+    html += '<div class="burn-bar-wrap">';
+    html += `<div class="burn-bar-label"><span>Budget used: ${budgetPct.toFixed(1)}%</span><span>${formatLiveNumber(sess.budgetWindowUsedTokens)} / ${formatLiveNumber(budget.limitTokens)} tokens</span></div>`;
+    html += `<div class="burn-bar"><div class="burn-fill ${fillClass}" style="width:${fillWidth}%"></div></div>`;
+    html += '</div>';
+  }
+
+  if (sess.alerts.length > 0) {
+    html += '<div class="alerts-list">';
+    for (const alert of sess.alerts) {
+      const dotColor = alert.severity === 'error' ? '#FF3B30' : '#FF9F0A';
+      html += `<div class="alert-item ${alert.severity}"><span style="color:${dotColor};font-size:1em;line-height:1;">●</span><span>${escapeHtml(alert.message)}</span></div>`;
+    }
+    html += '</div>';
+  }
+
+  html += '</div>'; // .session-card-body
+  html += '</div>';
+  return html;
+}
+
+function liveMetric(label: string, value: string, sub: string, cls = ''): string {
+  return `<div class="metric-box"><div class="metric-label">${label}</div><div class="metric-value${cls ? ' ' + cls : ''}">${value}</div>${sub ? `<div class="metric-sub">${sub}</div>` : ''}</div>`;
+}
+
+function formatLiveNumber(n: number): string {
+  if (n >= 1_000_000) { return (n / 1_000_000).toFixed(2) + 'M'; }
+  if (n >= 1_000) { return (n / 1_000).toFixed(1) + 'K'; }
+  return n.toFixed(0);
+}
+
+function formatLiveMinutes(m: number): string {
+  if (m < 1) { return '<1 min'; }
+  if (m < 60) { return `${Math.round(m)} min`; }
+  return `${Math.floor(m / 60)}h ${Math.round(m % 60)}m`;
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
