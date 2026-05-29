@@ -27,8 +27,10 @@ import { PromptHistoryStore } from './core/promptHistory';
 import { PromptHistoryViewProvider } from './webview/promptHistoryView';
 import { TokenCalculatorProvider } from './webview/tokenCalculator';
 import { BenchmarkViewProvider } from './webview/benchmarkView';
+import { ClaudeAccountViewProvider } from './webview/claudeAccountView';
 import { detectLiveSessions } from './core/liveSessionMonitor';
 import { SessionSnapshotStore } from './core/sessionSnapshotStore';
+import { LiveContextTracker, LiveContextInfo } from './core/liveContextTracker';
 import { LiveBudgetConfig, RateLimitEvent } from './types';
 
 let statusBarItem: vscode.StatusBarItem;
@@ -36,6 +38,7 @@ let refreshTimer: NodeJS.Timeout | undefined;
 let activeSessionsTimer: NodeJS.Timeout | undefined;
 let allSessions: Session[] = [];
 let latestMetrics: AggregatedMetrics | null = null;
+let liveContextInfo: LiveContextInfo | null = null;
 let connectedGitHubUser: ConnectedGitHubUser | undefined;
 const cacheManager = new CacheManager();
 let snapshotStore: SessionSnapshotStore;
@@ -66,6 +69,13 @@ export function activate(context: vscode.ExtensionContext) {
   statusBarItem.show();
   context.subscriptions.push(statusBarItem);
 
+  const liveTracker = new LiveContextTracker((info) => {
+    liveContextInfo = info;
+    if (latestMetrics) { updateStatusBar(latestMetrics); }
+  });
+  liveTracker.start(context.subscriptions);
+  context.subscriptions.push(liveTracker);
+
   context.subscriptions.push(
     vscode.commands.registerCommand('aiInsights.refresh', () => refresh(providers)),
     vscode.commands.registerCommand('aiInsights.showDashboard', () => showDashboard(context)),
@@ -80,6 +90,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('aiInsights.showPromptHistory', () => showPromptHistory(context)),
     vscode.commands.registerCommand('aiInsights.showTokenCalculator', () => TokenCalculatorProvider.createPanel(context)),
     vscode.commands.registerCommand('aiInsights.showBenchmark', () => BenchmarkViewProvider.createPanel(context)),
+    vscode.commands.registerCommand('aiInsights.showClaudeAccount', () => showClaudeAccount(context)),
     vscode.commands.registerCommand('aiInsights.logRateLimitHit', (provider: string, note: string) =>
       handleLogRateLimitHit(context, provider as any, note),
     ),
@@ -280,42 +291,79 @@ function updateStatusBar(metrics: AggregatedMetrics) {
     ? `${Math.round(hoursSaved * 60)}min`
     : `${hoursSaved.toFixed(1)}h`;
 
-  statusBarItem.text = `$(pulse) ${today} | ${monthly} | ~${fmtHours} saved ${overageIcon}`.trim();
-
   const cacheHitPct = Math.round(metrics.cache.cacheHitRate * 100);
   const aiCost = metrics.currentMonth.estimatedCost;
   const roiMultiplier = aiCost > 0 ? (valueGenerated / aiCost).toFixed(0) : '∞';
 
-  const lines = [
-    `🧠 AI Insights Token Tracker`,
-    ``,
-    `📅 Today: ${metrics.today.totalTokens.toLocaleString()} tokens · ${metrics.today.sessions} sessions`,
-  ];
+  const live = liveContextInfo;
 
-  for (const [id, p] of Object.entries(metrics.todayByProvider)) {
-    if (p.totalTokens > 0) {
-      const name = getProviderDisplayName(id);
-      lines.push(`\n ${name}: ${p.totalTokens.toLocaleString()} tokens (${p.sessions} sessions)`);
+  if (live) {
+    const healthIcon = live.healthLabel === 'healthy' ? '$(check)'
+      : live.healthLabel === 'warning' ? '$(warning)'
+      : '$(error)';
+    statusBarItem.text =
+      `$(pulse) ctx: ${fmt(live.lastInputTokens)} (${live.contextPct}%) ${healthIcon} · ${today} today`;
+
+    const titleLine = live.sessionTitle ? `**${live.sessionTitle}**\n\n` : '';
+    const ctxBar = buildMiniBar(live.contextPct, 20);
+    const lines = [
+      `🧠 AI Insights — Live Session`,
+      ``,
+      titleLine +
+      `Context: ${live.lastInputTokens.toLocaleString()} / ${live.contextLimitTokens.toLocaleString()} tokens`,
+      `\`${ctxBar}\` ${live.contextPct}%`,
+      `Health: **${live.healthLabel}** (${live.healthScore}/10) · Turns: ${live.turnsCount}`,
+      `Cache efficiency: ${live.cacheEfficiencyPct}%`,
+      ``,
+      `📅 Today: ${metrics.today.totalTokens.toLocaleString()} tokens · ${metrics.today.sessions} sessions`,
+    ];
+    for (const [id, p] of Object.entries(metrics.todayByProvider)) {
+      if (p.totalTokens > 0) {
+        lines.push(`\n &nbsp; ${getProviderDisplayName(id)}: ${p.totalTokens.toLocaleString()} tokens`);
+      }
     }
+    lines.push(``, `_Click for dashboard_`);
+
+    const tooltip = new vscode.MarkdownString(lines.join('\n'));
+    tooltip.isTrusted = true;
+    statusBarItem.tooltip = tooltip;
+  } else {
+    statusBarItem.text = `$(pulse) ${today} | ${monthly} | ~${fmtHours} saved ${overageIcon}`.trim();
+
+    const lines = [
+      `🧠 AI Insights Token Tracker`,
+      ``,
+      `📅 Today: ${metrics.today.totalTokens.toLocaleString()} tokens · ${metrics.today.sessions} sessions`,
+    ];
+    for (const [id, p] of Object.entries(metrics.todayByProvider)) {
+      if (p.totalTokens > 0) {
+        const name = getProviderDisplayName(id);
+        lines.push(`\n ${name}: ${p.totalTokens.toLocaleString()} tokens (${p.sessions} sessions)`);
+      }
+    }
+    lines.push(
+      ``,
+      `📆 This Month: ${metrics.currentMonth.totalTokens.toLocaleString()} tokens · ${metrics.currentMonth.sessions} sessions`,
+      `  Cache Hit Rate: ${cacheHitPct}%`,
+      ``,
+      `⏱ Impact (this month)`,
+      `  Hours saved: ~${fmtHours}`,
+      `  Value generated: ~$${valueGenerated.toFixed(0)}`,
+      `  ROI: ~${roiMultiplier}×`,
+      `  _(${tokensPerHour.toLocaleString()} tokens/hr · $${hourlyRate}/hr rate)_`,
+      ``,
+      `_Click for dashboard · Updates every 5 min_`,
+    );
+
+    const tooltip = new vscode.MarkdownString(lines.join('\n'));
+    tooltip.isTrusted = true;
+    statusBarItem.tooltip = tooltip;
   }
+}
 
-  lines.push(
-    ``,
-    `📆 This Month: ${metrics.currentMonth.totalTokens.toLocaleString()} tokens · ${metrics.currentMonth.sessions} sessions`,
-    `  Cache Hit Rate: ${cacheHitPct}%`,
-    ``,
-    `⏱ Impact (this month)`,
-    `  Hours saved: ~${fmtHours}`,
-    `  Value generated: ~$${valueGenerated.toFixed(0)}`,
-    `  ROI: ~${roiMultiplier}×`,
-    `  _(${tokensPerHour.toLocaleString()} tokens/hr · $${hourlyRate}/hr rate)_`,
-    ``,
-    `_Click for dashboard · Updates every 5 min_`,
-  );
-
-  const tooltip = new vscode.MarkdownString(lines.join('\n'));
-  tooltip.isTrusted = true;
-  statusBarItem.tooltip = tooltip;
+function buildMiniBar(pct: number, width: number): string {
+  const filled = Math.round(pct / 100 * width);
+  return '█'.repeat(filled) + '░'.repeat(width - filled);
 }
 
 function getProviderDisplayName(id: string): string {
@@ -410,6 +458,10 @@ function showPromptHistory(context: vscode.ExtensionContext) {
 async function showPricing(context: vscode.ExtensionContext) {
   if (!latestMetrics) { await refresh(getEnabledProviders()); }
   PricingViewProvider.createPanel(context, latestMetrics ?? undefined, connectedGitHubUser);
+}
+
+function showClaudeAccount(context: vscode.ExtensionContext) {
+  ClaudeAccountViewProvider.createPanel(context, latestMetrics ?? undefined, allSessions);
 }
 
 function getLiveSessions() {

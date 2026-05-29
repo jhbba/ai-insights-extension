@@ -70,6 +70,9 @@ export class CodexProvider extends BaseProvider {
       let workspace = 'unknown';
       let model = 'codex';
       let title: string | undefined;
+      let pendingToolCalls: string[] = [];
+      let pendingCommandRuns: string[] = [];
+      let pendingFileAccesses: Array<{ tool: string; path: string }> = [];
 
       for (const line of lines) {
         try {
@@ -96,6 +99,28 @@ export class CodexProvider extends BaseProvider {
             }
           }
 
+          const payloadType = entry.payload?.type;
+          if (entry.type === 'response_item' && entry.payload?.type === 'function_call') {
+            const name = String(entry.payload.name || 'unknown');
+            pendingToolCalls.push(name);
+            this.extractCodexFunctionDetails(name, entry.payload.arguments, pendingCommandRuns, pendingFileAccesses);
+            continue;
+          }
+
+          if (entry.type === 'event_msg' && payloadType === 'exec_command_end') {
+            if (pendingToolCalls[pendingToolCalls.length - 1] !== 'exec_command') {
+              pendingToolCalls.push('exec_command');
+            }
+            const cmd = this.extractExecutedCommand(entry.payload);
+            if (cmd && pendingCommandRuns[pendingCommandRuns.length - 1] !== cmd) {
+              pendingCommandRuns.push(cmd);
+            }
+            for (const fa of this.extractParsedCommandFiles(entry.payload)) {
+              pendingFileAccesses.push(fa);
+            }
+            continue;
+          }
+
           if (entry.type !== 'event_msg' || entry.payload?.type !== 'token_count') {
             continue;
           }
@@ -120,8 +145,13 @@ export class CodexProvider extends BaseProvider {
             cacheWriteTokens: 0,
             totalTokens,
             mode: 'agent',
-            toolCalls: [],
+            toolCalls: pendingToolCalls,
+            commandRuns: pendingCommandRuns.length > 0 ? pendingCommandRuns : undefined,
+            fileAccesses: pendingFileAccesses.length > 0 ? pendingFileAccesses : undefined,
           });
+          pendingToolCalls = [];
+          pendingCommandRuns = [];
+          pendingFileAccesses = [];
         } catch { /* skip malformed lines */ }
       }
 
@@ -175,5 +205,55 @@ export class CodexProvider extends BaseProvider {
     } catch {
       return new Date(0);
     }
+  }
+
+  private extractCodexFunctionDetails(
+    toolName: string,
+    rawArgs: unknown,
+    commandRuns: string[],
+    fileAccesses: Array<{ tool: string; path: string }>,
+  ): void {
+    let args: any = rawArgs;
+    if (typeof rawArgs === 'string') {
+      try { args = JSON.parse(rawArgs); } catch { args = {}; }
+    }
+    if (!args || typeof args !== 'object') { return; }
+
+    const lowerName = toolName.toLowerCase();
+    if (lowerName === 'exec_command' && typeof args.cmd === 'string' && args.cmd.trim()) {
+      commandRuns.push(args.cmd.trim());
+    }
+
+    const pathValue = args.path ?? args.file_path ?? args.ref_id;
+    if (typeof pathValue === 'string' && pathValue.startsWith('/')) {
+      const action = lowerName.includes('apply_patch') || lowerName.includes('write') || lowerName.includes('edit')
+        ? 'edit'
+        : 'read';
+      fileAccesses.push({ tool: action, path: pathValue });
+    }
+  }
+
+  private extractExecutedCommand(payload: any): string | null {
+    if (Array.isArray(payload?.command) && payload.command.length > 0) {
+      const command = payload.command;
+      if (command.length >= 3 && command[1] === '-lc' && typeof command[2] === 'string') {
+        return command[2];
+      }
+      return command.map((part: unknown) => String(part)).join(' ');
+    }
+    return null;
+  }
+
+  private extractParsedCommandFiles(payload: any): Array<{ tool: string; path: string }> {
+    const result: Array<{ tool: string; path: string }> = [];
+    const parsed = Array.isArray(payload?.parsed_cmd) ? payload.parsed_cmd : [];
+    for (const cmd of parsed) {
+      const pathValue = cmd?.path;
+      if (typeof pathValue !== 'string' || !pathValue) { continue; }
+      const type = String(cmd?.type || '').toLowerCase();
+      const tool = type.includes('write') || type.includes('edit') || type.includes('patch') ? 'edit' : 'read';
+      result.push({ tool, path: pathValue });
+    }
+    return result;
   }
 }

@@ -69,6 +69,24 @@ export class ClaudeCodeProvider extends BaseProvider {
             continue;
           }
 
+          // Detect compaction boundary events
+          if (entry.type === 'system' && entry.subtype === 'compact_boundary') {
+            const ts = new Date(entry.timestamp || Date.now());
+            if (!startTime) { startTime = ts; }
+            endTime = ts;
+            const meta = entry.compactMetadata || {};
+            interactions.push({
+              timestamp: ts, model: '', inputTokens: 0, outputTokens: 0,
+              thinkingTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0,
+              totalTokens: 0, mode: 'compaction', toolCalls: [],
+              isCompactionEvent: true,
+              compactionTrigger: meta.trigger === 'manual' ? 'manual' : 'auto',
+              preCompactionTokens: meta.preTokens,
+              postCompactionTokens: meta.postTokens,
+            });
+            continue;
+          }
+
           const ts = new Date(entry.timestamp || entry.createdAt || Date.now());
           if (!startTime) { startTime = ts; }
           endTime = ts;
@@ -101,6 +119,7 @@ export class ClaudeCodeProvider extends BaseProvider {
 
           // Tool calls live in message.content as type:"tool_use" blocks
           const toolCalls: string[] = [];
+          const commandRuns: string[] = [];
           const fileAccesses: Array<{ tool: string; path: string }> = [];
           const msgContent: unknown = entry.message?.content;
           if (Array.isArray(msgContent)) {
@@ -108,6 +127,9 @@ export class ClaudeCodeProvider extends BaseProvider {
               if (block?.type === 'tool_use') {
                 const name: string = block.name || 'unknown';
                 toolCalls.push(name);
+                if (name.toLowerCase() === 'bash' && typeof block.input?.command === 'string' && block.input.command.trim()) {
+                  commandRuns.push(block.input.command.trim());
+                }
                 const fp: unknown = block.input?.file_path ?? block.input?.notebook_path;
                 if (typeof fp === 'string' && fp) {
                   fileAccesses.push({ tool: name, path: fp });
@@ -132,6 +154,7 @@ export class ClaudeCodeProvider extends BaseProvider {
             totalTokens: inputTokens + outputTokens + thinkingTokens + cacheReadTokens + cacheWriteTokens,
             mode: entry.type || entry.role || entry.message?.role || 'chat',
             toolCalls,
+            commandRuns: commandRuns.length > 0 ? commandRuns : undefined,
             fileAccesses: fileAccesses.length > 0 ? fileAccesses : undefined,
             promptPreview: pendingUserPreview,
           });

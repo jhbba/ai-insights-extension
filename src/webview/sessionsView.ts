@@ -25,6 +25,10 @@ type SessionRow = {
   aiCredits: number;
   sourceFile: string;
   contextRot: ContextRotScore;
+  fileReads: Record<string, number>;
+  fileEdits: Record<string, number>;
+  toolCalls: Record<string, number>;
+  commandRuns: Record<string, number>;
 };
 
 export class SessionsViewProvider {
@@ -77,7 +81,7 @@ export class SessionsViewProvider {
         } else if (message.command === 'requestSessionAnalysis' && message.sessionId) {
           const sess = SessionsViewProvider._sessions.find(s => s.id === message.sessionId);
           if (sess) {
-            const analysis = computeContextRotAnalysis(sess);
+            const analysis = computeContextRotAnalysis(sess, SessionsViewProvider._sessions);
             const detail = {
               id: sess.id,
               workspace: sess.workspace || '',
@@ -91,8 +95,13 @@ export class SessionsViewProvider {
                 cacheReadTokens: i.cacheReadTokens,
                 cacheWriteTokens: i.cacheWriteTokens,
                 toolCalls: i.toolCalls || [],
+                commandRuns: i.commandRuns || [],
                 fileAccesses: i.fileAccesses || [],
                 promptPreview: i.promptPreview || '',
+                isCompactionEvent: i.isCompactionEvent || false,
+                compactionTrigger: i.compactionTrigger,
+                preCompactionTokens: i.preCompactionTokens,
+                postCompactionTokens: i.postCompactionTokens,
               })),
             };
             panel.webview.postMessage({ command: 'sessionAnalysis', analysis, detail });
@@ -163,6 +172,25 @@ export class SessionsViewProvider {
       .sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime())
       .map(s => {
         const cost = s.estimatedCostUsd ?? 0;
+        const fileReads: Record<string, number> = {};
+        const fileEdits: Record<string, number> = {};
+        const toolCalls: Record<string, number> = {};
+        const commandRuns: Record<string, number> = {};
+        for (const interaction of s.interactions || []) {
+          for (const tool of interaction.toolCalls || []) {
+            toolCalls[tool] = (toolCalls[tool] || 0) + 1;
+          }
+          for (const command of interaction.commandRuns || []) {
+            commandRuns[command] = (commandRuns[command] || 0) + 1;
+          }
+          for (const access of interaction.fileAccesses || []) {
+            const tool = access.tool.toLowerCase();
+            const target = tool === 'edit' || tool === 'notebookedit' || tool === 'write'
+              ? fileEdits
+              : fileReads;
+            target[access.path] = (target[access.path] || 0) + 1;
+          }
+        }
         return {
           id: s.id,
           provider: s.provider,
@@ -184,6 +212,10 @@ export class SessionsViewProvider {
           aiCredits: Math.round(cost * 100 * 100) / 100,
           sourceFile: s.sourceFile || '',
           contextRot: computeContextRotScore(s),
+          fileReads,
+          fileEdits,
+          toolCalls,
+          commandRuns,
         };
       });
   }
@@ -284,6 +316,24 @@ export class SessionsViewProvider {
     parts.push('.complexity-section h2{font-size:1em;font-weight:600;margin-bottom:4px;letter-spacing:-0.01em;}');
     parts.push('.complexity-section .subtitle{font-size:0.8em;color:var(--text-secondary);margin-bottom:16px;}');
     parts.push('.highest-cost-box{background:var(--bg-surface-high);border-radius:4px;padding:10px 14px;font-size:0.82em;margin-top:12px;}');
+    parts.push('.activity-section{background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;padding:20px 24px;margin-bottom:24px;}');
+    parts.push('.activity-section h2{font-size:1em;font-weight:600;margin-bottom:4px;letter-spacing:0;}');
+    parts.push('.activity-section .subtitle{font-size:0.8em;color:var(--text-secondary);margin-bottom:16px;}');
+    parts.push('.scope-tabs{display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap;}');
+    parts.push('.scope-tab{background:var(--bg-surface-high);border:1px solid var(--border);color:var(--text-secondary);border-radius:4px;padding:5px 11px;font-size:0.78em;cursor:pointer;}');
+    parts.push('.scope-tab.active{border-color:var(--primary);color:var(--text-primary);background:rgba(0,122,255,0.1);}');
+    parts.push('.activity-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;}');
+    parts.push('.activity-card{background:var(--bg-surface-high);border:1px solid var(--border);border-radius:6px;padding:14px 16px;min-width:0;}');
+    parts.push('.activity-card h3{font-size:0.78em;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);margin-bottom:10px;font-weight:600;}');
+    parts.push('.activity-list{display:flex;flex-direction:column;gap:6px;}');
+    parts.push('.activity-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;font-size:0.82em;}');
+    parts.push('.activity-name{font-family:var(--font-data);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}');
+    parts.push('.activity-count{font-family:var(--font-data);font-size:0.85em;color:var(--text-secondary);}');
+    parts.push('.activity-bar{grid-column:1 / -1;height:4px;border-radius:2px;background:rgba(255,255,255,0.05);overflow:hidden;margin-top:-2px;}');
+    parts.push('.activity-fill{height:100%;background:var(--primary);border-radius:2px;}');
+    parts.push('.activity-empty{font-size:0.82em;color:var(--text-secondary);padding:10px 0;}');
+    parts.push('.repo-activity{margin-top:16px;overflow-x:auto;}');
+    parts.push('.repo-activity table{min-width:860px;}');
     parts.push('.loading-spinner{width:12px;height:12px;border:2px solid rgba(0,122,255,0.3);border-top-color:var(--primary);border-radius:50%;animation:spin 0.7s linear infinite;flex-shrink:0;}');
     parts.push('@keyframes spin{to{transform:rotate(360deg)}}');
     parts.push('.pagination{display:flex;align-items:center;justify-content:center;gap:12px;padding:14px 16px;border-top:1px solid var(--border);}');
@@ -398,10 +448,46 @@ export class SessionsViewProvider {
     parts.push('.ov-checklist li{display:flex;gap:7px;font-size:0.82em;line-height:1.5;}');
     parts.push('.ov-checklist li::before{content:"\\2610";flex-shrink:0;color:var(--text-secondary);}');
     parts.push('.ov-itl-skip{font-size:0.71em;color:var(--text-secondary);padding:4px 10px;text-align:center;border:1px dashed rgba(255,255,255,0.08);border-radius:5px;margin-bottom:3px;}');
+    parts.push('.ov-itl-compact{display:flex;align-items:center;gap:7px;padding:5px 10px;background:rgba(255,159,10,0.07);border:1px dashed rgba(255,159,10,0.3);border-radius:6px;flex-wrap:wrap;}');
+    parts.push('.ov-itl-compact-icon{font-size:1em;color:#FF9F0A;}');
+    parts.push('.ov-itl-compact-label{font-size:0.82em;color:#FF9F0A;font-weight:500;}');
+    parts.push('.ov-itl-compact-trig{font-size:0.72em;padding:1px 5px;background:rgba(255,159,10,0.15);border-radius:3px;color:#FF9F0A;font-family:var(--font-data);}');
+    parts.push('.ov-itl-compact-saved{font-size:0.76em;color:var(--text-secondary);font-family:var(--font-data);}');
     parts.push('.ov-no-signals{font-size:0.82em;color:var(--text-secondary);padding:9px;text-align:center;}');
+    parts.push('.ov-opt-list{display:flex;flex-direction:column;gap:7px;}');
+    parts.push('.ov-opt-card{display:flex;align-items:flex-start;gap:12px;padding:10px 13px;background:rgba(57,255,20,0.04);border:1px solid rgba(57,255,20,0.12);border-radius:7px;}');
+    parts.push('.ov-opt-savings{flex-shrink:0;text-align:center;min-width:52px;}');
+    parts.push('.ov-opt-pct{font-size:1.2em;font-weight:700;color:#39FF14;font-family:var(--font-data);line-height:1;}');
+    parts.push('.ov-opt-pct-lbl{font-size:0.65em;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.04em;}');
+    parts.push('.ov-opt-body{flex:1;min-width:0;}');
+    parts.push('.ov-opt-header{display:flex;align-items:center;gap:6px;margin-bottom:3px;}');
+    parts.push('.ov-opt-badge{font-size:0.68em;padding:1px 6px;border-radius:3px;font-family:var(--font-data);font-weight:500;background:rgba(57,255,20,0.12);color:#39FF14;}');
+    parts.push('.ov-opt-title{font-size:0.88em;font-weight:600;}');
+    parts.push('.ov-opt-desc{font-size:0.79em;color:var(--text-secondary);margin-bottom:3px;line-height:1.4;}');
+    parts.push('.ov-opt-evidence{font-size:0.75em;font-family:var(--font-data);color:rgba(255,255,255,0.35);padding:2px 6px;background:rgba(255,255,255,0.03);border-radius:3px;display:inline-block;}');
+    parts.push('.ov-opt-toks{font-size:0.72em;color:var(--text-secondary);margin-top:2px;}');
     parts.push('.ov-heavy-tool{display:inline-block;margin:2px;padding:2px 7px;background:rgba(240,147,251,0.1);border-radius:3px;font-size:0.75em;color:#f093fb;font-family:var(--font-data);}');
     parts.push('.ov-fragment-list{display:flex;flex-direction:column;gap:3px;}');
     parts.push('.ov-fragment-item{font-size:0.77em;font-family:var(--font-data);padding:3px 7px;background:var(--bg-surface-high);border-radius:4px;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}');
+    // Tier-1/3 metric styles
+    parts.push('.ov-cq-card{display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:70px;background:var(--bg-surface-high);border-radius:8px;padding:8px 12px;border:1px solid var(--border);}');
+    parts.push('.ov-cq-score{font-family:var(--font-data);font-size:1.35em;font-weight:700;line-height:1;}');
+    parts.push('.ov-cq-label{font-size:0.62em;color:var(--text-secondary);margin-top:3px;text-transform:uppercase;letter-spacing:0.05em;}');
+    parts.push('.ov-runway-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:0.78em;font-family:var(--font-data);background:rgba(0,122,255,0.1);color:var(--primary);margin-left:8px;}');
+    parts.push('.ov-sibling-banner{background:rgba(255,159,10,0.07);border:1px solid rgba(255,159,10,0.2);border-radius:7px;padding:9px 13px;margin-bottom:12px;font-size:0.82em;}');
+    parts.push('.ov-sibling-title{color:#FF9F0A;font-weight:600;margin-bottom:4px;}');
+    parts.push('.ov-sibling-list{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px;}');
+    parts.push('.ov-sibling-chip{font-size:0.78em;padding:1px 7px;background:rgba(255,159,10,0.1);border-radius:3px;color:#FF9F0A;font-family:var(--font-data);}');
+    parts.push('.ov-budget-wrap{display:flex;align-items:flex-start;gap:20px;flex-wrap:wrap;}');
+    parts.push('.ov-budget-chart-box{flex-shrink:0;position:relative;width:140px;height:140px;}');
+    parts.push('.ov-budget-legend{display:flex;flex-direction:column;gap:7px;justify-content:center;flex:1;min-width:160px;}');
+    parts.push('.ov-budget-row{display:flex;align-items:center;gap:7px;font-size:0.82em;}');
+    parts.push('.ov-bdot{width:9px;height:9px;border-radius:50%;flex-shrink:0;}');
+    parts.push('.ov-bval{margin-left:auto;font-family:var(--font-data);font-size:0.9em;color:var(--text-secondary);}');
+    parts.push('.ov-eff-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:7px;margin-top:10px;}');
+    parts.push('.ov-eff-stat{background:var(--bg-surface-high);border-radius:6px;padding:9px;text-align:center;}');
+    parts.push('.ov-eff-val{font-family:var(--font-data);font-size:1em;font-weight:700;margin-bottom:2px;}');
+    parts.push('.ov-eff-lbl{font-size:0.65em;color:var(--text-secondary);}');
     parts.push('</style></head><body>');
 
     parts.push(navTopbarHtml(logoUri, true, refreshing));
@@ -467,6 +553,17 @@ export class SessionsViewProvider {
     parts.push('  <div class="highest-cost-box" id="scHighestCost" style="display:none"></div>');
     parts.push('</div>');
 
+    parts.push('<div class="activity-section" id="activityStats">');
+    parts.push('  <h2>Activity Stats</h2>');
+    parts.push('  <p class="subtitle">Most-read files, edited files, tool calls, and shell commands for the current filter.</p>');
+    parts.push('  <div class="scope-tabs">');
+    parts.push('    <button class="scope-tab active" data-scope="overall">Overall</button>');
+    parts.push('    <button class="scope-tab" data-scope="repository">Repository</button>');
+    parts.push('    <button class="scope-tab" data-scope="session">Session</button>');
+    parts.push('  </div>');
+    parts.push('  <div id="activityBody"></div>');
+    parts.push('</div>');
+
     parts.push('<div class="section"><div id="tableContainer"></div></div>');
     parts.push('<div class="footer">Deep session analysis for AI-assisted development. Data updated in real-time.</div>');
     parts.push('</div><!-- /ns-content -->');
@@ -500,6 +597,7 @@ export class SessionsViewProvider {
     parts.push('  var currentFiltered=ALL_SESSIONS.slice();');
     parts.push('  var currentPage=0;');
     parts.push('  var PAGE_SIZE=50;');
+    parts.push('  var activityScope="overall";');
     parts.push('  Chart.defaults.font.family="var(--font-primary)";');
     parts.push('  Chart.defaults.color="#c1c6d7";');
 
@@ -521,12 +619,13 @@ export class SessionsViewProvider {
     parts.push('  document.getElementById("metricType").onchange=applyFilters;');
     parts.push('  document.getElementById("breakdownType").onchange=applyFilters;');
     parts.push('  document.getElementById("searchFilter").oninput=applyFilters;');
+    parts.push('  document.querySelectorAll(".scope-tab").forEach(function(btn){btn.addEventListener("click",function(){activityScope=btn.getAttribute("data-scope")||"overall";document.querySelectorAll(".scope-tab").forEach(function(b){b.classList.toggle("active",b===btn);});updateActivity(currentFiltered);});});');
 
     parts.push('  function openSession(idx){var s=currentFiltered[idx];if(s&&s.sourceFile)vscode.postMessage({command:"openSession",sourceFile:s.sourceFile});}');
     parts.push('  window.openSession=openSession;');
 
     // ── Analyze overlay ────────────────────────────────────────────────────────
-    parts.push('  var _ovChart=null,_ovRingChart=null,_ovPending=null;');
+    parts.push('  var _ovChart=null,_ovRingChart=null,_budgetChart=null,_ovPending=null;');
     parts.push('  function analyzeSession(idx){');
     parts.push('    var s=currentFiltered[idx];if(!s)return;');
     parts.push('    _ovPending=s;');
@@ -550,13 +649,14 @@ export class SessionsViewProvider {
     parts.push('    var body=document.getElementById("ovBody");if(!body)return;');
     parts.push('    var a=msg.analysis,det=msg.detail;');
     parts.push('    body.innerHTML=buildOvHtml(a,s,det);');
-    parts.push('    if(a){renderOvRing(a.score,a.label);renderOvChart(a);}');
+    parts.push('    if(a){renderOvRing(a.score,a.label);renderOvChart(a);renderBudgetChart(a);}');
     parts.push('  });');
     parts.push('  window.closeAnalyzeOverlay=function(){');
     parts.push('    var ov=document.getElementById("analyzeOverlay");if(ov)ov.style.display="none";');
     parts.push('    document.body.style.overflow="";');
     parts.push('    if(_ovChart){_ovChart.destroy();_ovChart=null;}');
     parts.push('    if(_ovRingChart){_ovRingChart.destroy();_ovRingChart=null;}');
+    parts.push('    if(_budgetChart){_budgetChart.destroy();_budgetChart=null;}');
     parts.push('    vscode.postMessage({command:"overlayClosed"});');
     parts.push('  };');
     parts.push('  document.getElementById("analyzeOverlay").addEventListener("click",function(e){if(e.target===this)window.closeAnalyzeOverlay();});');
@@ -566,9 +666,26 @@ export class SessionsViewProvider {
     parts.push('    var sc=a.label==="stale"?"#FF3B30":a.label==="warning"?"#FF9F0A":"#39FF14";');
     parts.push('    h+=\'<div class="ov-score-hdr">\';');
     parts.push('    h+=\'<div class="ov-score-ring"><canvas id="ovScoreRing" width="64" height="64"></canvas><div class="ov-score-ring-val" style="color:\'+sc+\'">\'+a.score+\'</div></div>\';');
-    parts.push('    h+=\'<div><div style="font-size:1em;font-weight:600;margin-bottom:4px;">\'+esc(s.title||s.id.slice(0,20))+\'</div>\';');
-    parts.push('    h+=\'<div style="font-size:0.8em;color:var(--text-secondary)">\'+esc(s.provider)+\' &middot; \'+new Date(s.startTime).toLocaleString()+\' &middot; \'+a.turnsCount+\' turns &middot; \'+Math.round(a.sessionAgeMinutes)+\' min</div></div></div>\';');
+    // CQ score card
+    parts.push('    var cqCol=a.contextQualityScore>=80?"#39FF14":a.contextQualityScore>=50?"#FF9F0A":"#FF3B30";');
+    parts.push('    h+=\'<div class="ov-cq-card"><div class="ov-cq-score" style="color:\'+cqCol+\'">\'+a.contextQualityScore+\'</div><div class="ov-cq-label">CQ Score</div></div>\';');
+    parts.push('    h+=\'<div style="flex:1;min-width:0"><div style="font-size:1em;font-weight:600;margin-bottom:4px;">\'+esc(s.title||s.id.slice(0,20))+\'</div>\';');
+    parts.push('    h+=\'<div style="font-size:0.8em;color:var(--text-secondary)">\'+esc(s.provider)+\' &middot; \'+new Date(s.startTime).toLocaleString()+\' &middot; \'+a.turnsCount+\' turns &middot; \'+Math.round(a.sessionAgeMinutes)+\' min</div>\';');
+    parts.push('    h+=\'<div style="margin-top:5px">\';');
+    parts.push('    if(a.contextRunway!=null)h+=\'<span class="ov-runway-chip">&#9193; ~\'+a.contextRunway+\' turns left</span>\';');
+    parts.push('    var growthLabel={"linear":"Linear growth","exponential":"Exponential growth","plateau":"Plateau","spike":"Context spike"};');
+    parts.push('    var growthCol={"linear":"var(--text-secondary)","exponential":"#FF3B30","plateau":"#39FF14","spike":"#FF9F0A"};');
+    parts.push('    h+=\'<span style="font-size:0.78em;color:\'+growthCol[a.growthCurve||"linear"]+\';margin-left:8px">\'+( growthLabel[a.growthCurve||"linear"]||"")+\'</span>\';');
+    parts.push('    h+=\'</div></div></div>\';');
     parts.push('    if(a.restartRecommended)h+=\'<div class="ov-restart-banner"><strong>Restart Recommended&ensp;</strong>\'+esc(a.restartReason)+\'</div>\';');
+    // Siblings banner
+    parts.push('    if(a.sessionSiblings&&a.sessionSiblings.length>0){');
+    parts.push('      h+=\'<div class="ov-sibling-banner"><div class="ov-sibling-title">&#9888; Groundhog-day pattern detected</div>\';');
+    parts.push('      h+=\'<div style="font-size:0.85em;color:var(--text-secondary)">\'+a.sessionSiblings.length+\' similar session(s) in the same workspace within 24 h — you may be restarting the same task.</div>\';');
+    parts.push('      h+=\'<div class="ov-sibling-list">\';');
+    parts.push('      a.sessionSiblings.forEach(function(sib){var t=sib.title||sib.sessionId.slice(0,16);h+=\'<span class="ov-sibling-chip">\'+esc(t)+\'</span>\';});');
+    parts.push('      h+=\'</div></div>\';');
+    parts.push('    }');
     // Context Size
     parts.push('    h+=\'<div class="ov-section"><div class="ov-section-title">Context Size</div><div class="ov-section-sub">Accumulated tokens and cache efficiency</div>\';');
     parts.push('    if(det&&det.interactions&&det.interactions.length>0){');
@@ -595,6 +712,28 @@ export class SessionsViewProvider {
     parts.push('      if(totCW>0)h+=\'<span>&#9999; \'+fmt(totCW)+\' cache writes</span>\';');
     parts.push('      h+=\'</div>\';');
     parts.push('    }else{h+=\'<div class="ov-no-signals">No token data.</div>\';}');
+    parts.push('    h+=\'</div>\';');
+    // Context Budget Allocation
+    parts.push('    h+=\'<div class="ov-section"><div class="ov-section-title">Context Budget Allocation</div><div class="ov-section-sub">How your total token spend was used — teaches which parts of the context are costly</div>\';');
+    parts.push('    if(a.contextBudgetAllocation){');
+    parts.push('      var ba=a.contextBudgetAllocation;');
+    parts.push('      h+=\'<div class="ov-budget-wrap"><div class="ov-budget-chart-box"><canvas id="ovBudgetChart" width="140" height="140"></canvas></div><div class="ov-budget-legend">\';');
+    parts.push('      if(ba.cachedTokens>0)h+=\'<div class="ov-budget-row"><span class="ov-bdot" style="background:#FF9F0A"></span>Cached input<span class="ov-bval">\'+ba.cachedPct+\'% · \'+fmt(ba.cachedTokens)+\'</span></div>\';');
+    parts.push('      if(ba.freshInputTokens>0)h+=\'<div class="ov-budget-row"><span class="ov-bdot" style="background:#007AFF"></span>Fresh input<span class="ov-bval">\'+ba.freshInputPct+\'% · \'+fmt(ba.freshInputTokens)+\'</span></div>\';');
+    parts.push('      if(ba.outputTokens>0)h+=\'<div class="ov-budget-row"><span class="ov-bdot" style="background:#39FF14"></span>Output<span class="ov-bval">\'+ba.outputPct+\'% · \'+fmt(ba.outputTokens)+\'</span></div>\';');
+    parts.push('      if(ba.thinkingTokens>0)h+=\'<div class="ov-budget-row"><span class="ov-bdot" style="background:#f093fb"></span>Thinking<span class="ov-bval">\'+ba.thinkingPct+\'% · \'+fmt(ba.thinkingTokens)+\'</span></div>\';');
+    parts.push('      if(ba.cacheWriteTokens>0)h+=\'<div class="ov-budget-row"><span class="ov-bdot" style="background:#FFD60A"></span>Cache writes<span class="ov-bval">\'+ba.cacheWritePct+\'% · \'+fmt(ba.cacheWriteTokens)+\'</span></div>\';');
+    parts.push('      h+=\'</div></div>\';');
+    // Efficiency stats row
+    parts.push('      h+=\'<div class="ov-eff-grid">\';');
+    parts.push('      var cqColE=a.contextQualityScore>=80?"#39FF14":a.contextQualityScore>=50?"#FF9F0A":"#FF3B30";');
+    parts.push('      h+=\'<div class="ov-eff-stat"><div class="ov-eff-val" style="color:\'+cqColE+\'">\'+a.contextQualityScore+\'/100</div><div class="ov-eff-lbl">CQ Score</div></div>\';');
+    parts.push('      h+=\'<div class="ov-eff-stat"><div class="ov-eff-val" style="color:#FF9F0A">\'+a.cacheEfficiencyRate+\'%</div><div class="ov-eff-lbl">Cache efficiency</div></div>\';');
+    parts.push('      var limC=a.lostInMiddleRisk>60?"#FF3B30":a.lostInMiddleRisk>30?"#FF9F0A":"#39FF14";');
+    parts.push('      h+=\'<div class="ov-eff-stat"><div class="ov-eff-val" style="color:\'+limC+\'">\'+a.lostInMiddleRisk+\'%</div><div class="ov-eff-lbl">Lost-in-middle</div></div>\';');
+    parts.push('      if(a.thinkingEfficiencyTrend&&a.thinkingEfficiencyTrend!=="none"){var trendC={"rising":"#FF3B30","stable":"#39FF14","falling":"#007AFF"};h+=\'<div class="ov-eff-stat"><div class="ov-eff-val" style="color:\'+trendC[a.thinkingEfficiencyTrend]+\'">\'+a.thinkingEfficiencyTrend+\'</div><div class="ov-eff-lbl">Thinking trend</div></div>\';}');
+    parts.push('      h+=\'</div>\';');
+    parts.push('    }else{h+=\'<div class="ov-no-signals">No budget data.</div>\';}');
     parts.push('    h+=\'</div>\';');
     // Context Timeline
     parts.push('    h+=\'<div class="ov-section"><div class="ov-section-title">Context Timeline</div><div class="ov-section-sub">Input growth, output trend, and tool activity per turn</div><div class="ov-chart-wrap"><canvas id="ovTimelineChart"></canvas></div></div>\';');
@@ -636,6 +775,25 @@ export class SessionsViewProvider {
     parts.push('      h+=\'</div>\';');
     parts.push('    }else{h+=\'<div class="ov-no-signals">No overload signals — session looks healthy.</div>\';}');
     parts.push('    h+=\'</div>\';');
+    // Context Optimization Proposals
+    parts.push('    h+=\'<div class="ov-section"><div class="ov-section-title">Context Optimization</div><div class="ov-section-sub">Techniques with estimated token savings for this session</div>\';');
+    parts.push('    var opts=a.optimizationProposals||[];');
+    parts.push('    if(opts.length>0){');
+    parts.push('      var techLabels={caveman:"caveman",file_reread:"re-reads",toon:"TOON",early_compact:"/compact",output_trim:"trim output",prompt_dedupe:"dedupe"};');
+    parts.push('      h+=\'<div class="ov-opt-list">\';');
+    parts.push('      opts.forEach(function(op){');
+    parts.push('        h+=\'<div class="ov-opt-card">\';');
+    parts.push('        h+=\'<div class="ov-opt-savings"><div class="ov-opt-pct">\'+op.savingsPct+\'%</div><div class="ov-opt-pct-lbl">saved</div></div>\';');
+    parts.push('        h+=\'<div class="ov-opt-body">\';');
+    parts.push('        h+=\'<div class="ov-opt-header"><span class="ov-opt-badge">\'+esc(techLabels[op.technique]||op.technique)+\'</span><span class="ov-opt-title">\'+esc(op.title)+\'</span></div>\';');
+    parts.push('        h+=\'<div class="ov-opt-desc">\'+esc(op.description)+\'</div>\';');
+    parts.push('        h+=\'<span class="ov-opt-evidence">\'+esc(op.evidence)+\'</span>\';');
+    parts.push('        h+=\'<div class="ov-opt-toks">~\'+fmt(op.estimatedSavings)+\' tokens</div>\';');
+    parts.push('        h+=\'</div></div>\';');
+    parts.push('      });');
+    parts.push('      h+=\'</div>\';');
+    parts.push('    }else{h+=\'<div class="ov-no-signals">No optimization opportunities detected.</div>\';}');
+    parts.push('    h+=\'</div>\';');
     // Interaction Timeline
     parts.push('    h+=\'<div class="ov-section"><div class="ov-section-title">Interaction Timeline</div><div class="ov-section-sub">Per-turn: prompt, tools called, and token flow</div>\';');
     parts.push('    if(det&&det.interactions&&det.interactions.length>0){');
@@ -645,14 +803,22 @@ export class SessionsViewProvider {
     parts.push('      iall.slice(sf2).forEach(function(it,li){');
     parts.push('        var ti=sf2+li;');
     parts.push('        var tt=new Date(it.ts).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});');
+    parts.push('        if(it.isCompactionEvent){');
+    parts.push('          var trig=it.compactionTrigger==="manual"?"manual":"auto";');
+    parts.push('          var saved=it.preCompactionTokens&&it.postCompactionTokens?fmt(it.preCompactionTokens)+"\\u2192"+fmt(it.postCompactionTokens):"";');
+    parts.push('          h+=\'<div class="ov-itl-compact"><span class="ov-itl-compact-icon">\\u21ba</span><span class="ov-itl-compact-label">Context compacted</span><span class="ov-itl-compact-trig">\'+trig+\'</span>\'+( saved?\'<span class="ov-itl-compact-saved">\'+saved+\' tokens</span>\':\'\')+\'<span class="ov-itl-time">\'+tt+\'</span></div>\';');
+    parts.push('          return;');
+    parts.push('        }');
     parts.push('        h+=\'<div class="ov-itl-row"><div class="ov-itl-idx">T\'+ti+\'</div><div class="ov-itl-body">\';');
     parts.push('        h+=\'<div class="ov-itl-meta"><span class="ov-itl-time">\'+tt+\'</span>\';');
     parts.push('        if(it.mode)h+=\'<span class="ov-itl-mode">\'+esc(it.mode)+\'</span>\';');
     parts.push('        if(it.promptPreview)h+=\'<span class="ov-itl-prompt">\'+esc(it.promptPreview.slice(0,100))+\'</span>\';');
     parts.push('        h+=\'</div>\';');
     parts.push('        if(it.toolCalls&&it.toolCalls.length){h+=\'<div class="ov-itl-tools">\';var faCopy=(it.fileAccesses||[]).slice();it.toolCalls.slice(0,12).forEach(function(t){var fi=-1;for(var k=0;k<faCopy.length;k++){if(faCopy[k].tool.toLowerCase()===t.toLowerCase()){fi=k;break;}}if(fi>=0){var fa=faCopy.splice(fi,1)[0];var bn=fa.path.split("/").pop()||fa.path;h+=\'<span class="ov-itl-tool">\'+esc(t)+\'<span class="ov-itl-tool-fname">\'+esc(bn)+\'</span></span>\';}else{h+=\'<span class="ov-itl-tool">\'+esc(t)+\'</span>\';}});if(it.toolCalls.length>12)h+=\'<span class="ov-itl-tool">+\'+(it.toolCalls.length-12)+\'</span>\';h+=\'</div>\';}');
-    parts.push('        h+=\'<div class="ov-itl-toks"><span class="ov-tok ov-tok-i" title="Input tokens">\\u2191 \'+fmt(it.inputTokens)+\'</span><span class="ov-tok ov-tok-o" title="Output tokens">\\u2193 \'+fmt(it.outputTokens)+\'</span>\';');
-    parts.push('        if(it.cacheReadTokens>0)h+=\'<span class="ov-tok ov-tok-c" title="Cache read tokens">\\u26a1 \'+fmt(it.cacheReadTokens)+\'</span>\';');
+    parts.push('        if(it.commandRuns&&it.commandRuns.length){h+=\'<div class="ov-itl-tools">\';it.commandRuns.slice(0,3).forEach(function(cmd){h+=\'<span class="ov-itl-tool" title="\'+esc(cmd)+\'">$\'+esc(cmd.slice(0,80))+\'</span>\';});if(it.commandRuns.length>3)h+=\'<span class="ov-itl-tool">+\'+(it.commandRuns.length-3)+\' commands</span>\';h+=\'</div>\';}');
+    parts.push('        var ctxToks=it.inputTokens+(it.cacheReadTokens||0);');
+    parts.push('        h+=\'<div class="ov-itl-toks"><span class="ov-tok ov-tok-i" title="Total context size (new input + cache read)">\\u2191 \'+fmt(ctxToks)+\'</span><span class="ov-tok ov-tok-o" title="Output tokens">\\u2193 \'+fmt(it.outputTokens)+\'</span>\';');
+    parts.push('        if(it.cacheReadTokens>0)h+=\'<span class="ov-tok ov-tok-c" title="Cache read tokens (included in context \\u2191)">\\u26a1 \'+fmt(it.cacheReadTokens)+\'</span>\';');
     parts.push('        if(it.thinkingTokens>0)h+=\'<span class="ov-tok ov-tok-t" title="Thinking tokens">think \'+fmt(it.thinkingTokens)+\'</span>\';');
     parts.push('        if(it.cacheWriteTokens>0)h+=\'<span class="ov-tok ov-tok-w" title="Cache write tokens">\\u270d \'+fmt(it.cacheWriteTokens)+\'</span>\';');
     parts.push('        h+=\'</div></div></div>\';');
@@ -696,6 +862,13 @@ export class SessionsViewProvider {
     parts.push('    var c=document.getElementById("ovScoreRing");if(!c)return;');
     parts.push('    var col=label==="stale"?"#FF3B30":label==="warning"?"#FF9F0A":"#39FF14";');
     parts.push('    _ovRingChart=new Chart(c,{type:"doughnut",data:{datasets:[{data:[score,10-score],backgroundColor:[col,"rgba(255,255,255,0.05)"],borderWidth:0}]},options:{responsive:false,animation:{duration:400},plugins:{legend:{display:false},tooltip:{enabled:false}},cutout:"72%"}});');
+    parts.push('  }');
+    parts.push('  function renderBudgetChart(a){');
+    parts.push('    var c=document.getElementById("ovBudgetChart");if(!c||!a.contextBudgetAllocation)return;');
+    parts.push('    var ba=a.contextBudgetAllocation;');
+    parts.push('    var segs=[{v:ba.cachedTokens,c:"#FF9F0A",l:"Cached"},{v:ba.freshInputTokens,c:"#007AFF",l:"Fresh input"},{v:ba.outputTokens,c:"#39FF14",l:"Output"},{v:ba.thinkingTokens,c:"#f093fb",l:"Thinking"},{v:ba.cacheWriteTokens,c:"#FFD60A",l:"Cache writes"}].filter(function(s){return s.v>0;});');
+    parts.push('    if(!segs.length)return;');
+    parts.push('    _budgetChart=new Chart(c,{type:"doughnut",data:{labels:segs.map(function(s){return s.l;}),datasets:[{data:segs.map(function(s){return s.v;}),backgroundColor:segs.map(function(s){return s.c;}),borderWidth:0}]},options:{responsive:false,animation:{duration:400},plugins:{legend:{display:false},tooltip:{enabled:true,callbacks:{label:function(ctx){var s=segs[ctx.dataIndex];return s.l+": "+Math.round(s.v/1000)+"K";}}}},cutout:"60%"}});');
     parts.push('  }');
     parts.push('  function fmt(n){if(n>=1e6)return(n/1e6).toFixed(1)+"M";if(n>=1e3)return(n/1e3).toFixed(1)+"K";return String(n||0);}');
     parts.push('  function esc(s){return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}');
@@ -755,6 +928,7 @@ export class SessionsViewProvider {
     parts.push('    updateCharts(f);');
     parts.push('    updateStats(f);');
     parts.push('    updateComplexity(f);');
+    parts.push('    updateActivity(f);');
     parts.push('    saveState();');
     parts.push('  }');
 
@@ -808,6 +982,51 @@ export class SessionsViewProvider {
     parts.push('    } else if(hcBox){hcBox.style.display="none";}');
     parts.push('  }');
 
+    parts.push('  function mergeMap(target,source){Object.keys(source||{}).forEach(function(k){target[k]=(target[k]||0)+source[k];});}');
+    parts.push('  function topEntries(map,limit){return Object.keys(map||{}).map(function(k){return{name:k,count:map[k]};}).sort(function(a,b){return b.count-a.count||a.name.localeCompare(b.name);}).slice(0,limit||8);}');
+    parts.push('  function repoName(s){return s.workspace?(s.workspace.replace(/\\\\\\\\/g,"/").split("/").pop()||s.workspace):"Unknown";}');
+    parts.push('  function relPath(fp,workspace){var p=String(fp||"");var ws=String(workspace||"").replace(/\\\\\\\\/g,"/");var pn=p.replace(/\\\\\\\\/g,"/");if(ws&&pn.startsWith(ws))return pn.slice(ws.length).replace(/^\\//,"");var parts=pn.split("/");return parts.length>3?".../"+parts.slice(-3).join("/"):pn;}');
+    parts.push('  function renderActivityCard(title,entries,color){');
+    parts.push('    var max=entries.length?entries[0].count:0;');
+    parts.push('    var html="<div class=\\"activity-card\\"><h3>"+esc(title)+"</h3>";');
+    parts.push('    if(!entries.length){html+="<div class=\\"activity-empty\\">No data recorded.</div></div>";return html;}');
+    parts.push('    html+="<div class=\\"activity-list\\">";');
+    parts.push('    entries.forEach(function(e){var pct=max?Math.max(4,Math.round(e.count/max*100)):0;html+="<div class=\\"activity-row\\"><span class=\\"activity-name\\" title=\\""+esc(e.name)+"\\">"+esc(e.label||e.name)+"</span><span class=\\"activity-count\\">"+e.count.toLocaleString()+"</span><div class=\\"activity-bar\\"><div class=\\"activity-fill\\" style=\\"width:"+pct+"%;background:"+color+"\\"></div></div></div>";});');
+    parts.push('    html+="</div></div>";return html;');
+    parts.push('  }');
+    parts.push('  function collectActivity(sessions){');
+    parts.push('    var reads={},edits={},tools={},commands={};');
+    parts.push('    sessions.forEach(function(s){mergeMap(reads,s.fileReads);mergeMap(edits,s.fileEdits);mergeMap(tools,s.toolCalls);mergeMap(commands,s.commandRuns);});');
+    parts.push('    return{reads:reads,edits:edits,tools:tools,commands:commands};');
+    parts.push('  }');
+    parts.push('  function renderOverallActivity(sessions){');
+    parts.push('    var a=collectActivity(sessions);');
+    parts.push('    var firstWs=sessions.length===1?sessions[0].workspace:"";');
+    parts.push('    var reads=topEntries(a.reads,8).map(function(e){e.label=relPath(e.name,firstWs);return e;});');
+    parts.push('    var edits=topEntries(a.edits,8).map(function(e){e.label=relPath(e.name,firstWs);return e;});');
+    parts.push('    return"<div class=\\"activity-grid\\">"+renderActivityCard("Most Read Files",reads,"#007AFF")+renderActivityCard("Most Edited Files",edits,"#FF9F0A")+renderActivityCard("Most Used Tools",topEntries(a.tools,8),"#f093fb")+renderActivityCard("Commands Run",topEntries(a.commands,8),"#39FF14")+"</div>";');
+    parts.push('  }');
+    parts.push('  function renderRepositoryActivity(sessions){');
+    parts.push('    var repos={};');
+    parts.push('    sessions.forEach(function(s){var r=repoName(s);if(!repos[r])repos[r]={sessions:0,reads:{},edits:{},tools:{},commands:{},tokens:0};var x=repos[r];x.sessions++;x.tokens+=s.totalTokens;mergeMap(x.reads,s.fileReads);mergeMap(x.edits,s.fileEdits);mergeMap(x.tools,s.toolCalls);mergeMap(x.commands,s.commandRuns);});');
+    parts.push('    var names=Object.keys(repos).sort(function(a,b){return repos[b].sessions-repos[a].sessions||repos[b].tokens-repos[a].tokens;});');
+    parts.push('    if(!names.length)return"<div class=\\"activity-empty\\">No repositories match the current filters.</div>";');
+    parts.push('    var rows=names.slice(0,12).map(function(name){var r=repos[name];var tr=topEntries(r.reads,1)[0];var te=topEntries(r.edits,1)[0];var tt=topEntries(r.tools,1)[0];var tc=topEntries(r.commands,1)[0];return"<tr><td><strong>"+esc(name)+"</strong></td><td class=\\"data-text\\" style=\\"text-align:right\\">"+r.sessions+"</td><td class=\\"data-text\\" style=\\"text-align:right\\">"+fmt(r.tokens)+"</td><td title=\\""+esc(tr?tr.name:"")+"\\">"+esc(tr?relPath(tr.name,"")+" ("+tr.count+")":"-")+"</td><td title=\\""+esc(te?te.name:"")+"\\">"+esc(te?relPath(te.name,"")+" ("+te.count+")":"-")+"</td><td>"+esc(tt?tt.name+" ("+tt.count+")":"-")+"</td><td title=\\""+esc(tc?tc.name:"")+"\\">"+esc(tc?tc.name+" ("+tc.count+")":"-")+"</td></tr>";}).join("");');
+    parts.push('    return"<div class=\\"repo-activity\\"><table><thead><tr><th>Repository</th><th style=\\"text-align:right\\">Sessions</th><th style=\\"text-align:right\\">Tokens</th><th>Top Read</th><th>Top Edit</th><th>Top Tool</th><th>Top Command</th></tr></thead><tbody>"+rows+"</tbody></table></div>";');
+    parts.push('  }');
+    parts.push('  function renderSessionActivity(sessions){');
+    parts.push('    var top=sessions.slice().sort(function(a,b){return (Object.keys(b.fileReads||{}).length+Object.keys(b.fileEdits||{}).length+Object.keys(b.commandRuns||{}).length)-(Object.keys(a.fileReads||{}).length+Object.keys(a.fileEdits||{}).length+Object.keys(a.commandRuns||{}).length);}).slice(0,10);');
+    parts.push('    if(!top.length)return"<div class=\\"activity-empty\\">No sessions match the current filters.</div>";');
+    parts.push('    var rows=top.map(function(s){var tr=topEntries(s.fileReads,1)[0];var te=topEntries(s.fileEdits,1)[0];var tt=topEntries(s.toolCalls,1)[0];var tc=topEntries(s.commandRuns,1)[0];var name=s.title||s.id.slice(0,18);return"<tr><td title=\\""+esc(s.id)+"\\"><strong>"+esc(name)+"</strong><br><span style=\\"color:var(--text-secondary);font-size:0.78em\\">"+esc(repoName(s))+" · "+fmtDate(s.startTime)+"</span></td><td class=\\"data-text\\" style=\\"text-align:right\\">"+s.interactions+"</td><td title=\\""+esc(tr?tr.name:"")+"\\">"+esc(tr?relPath(tr.name,s.workspace)+" ("+tr.count+")":"-")+"</td><td title=\\""+esc(te?te.name:"")+"\\">"+esc(te?relPath(te.name,s.workspace)+" ("+te.count+")":"-")+"</td><td>"+esc(tt?tt.name+" ("+tt.count+")":"-")+"</td><td title=\\""+esc(tc?tc.name:"")+"\\">"+esc(tc?tc.name+" ("+tc.count+")":"-")+"</td></tr>";}).join("");');
+    parts.push('    return"<div class=\\"repo-activity\\"><table><thead><tr><th>Session</th><th style=\\"text-align:right\\">Turns</th><th>Top Read</th><th>Top Edit</th><th>Top Tool</th><th>Top Command</th></tr></thead><tbody>"+rows+"</tbody></table></div>";');
+    parts.push('  }');
+    parts.push('  function updateActivity(sessions){');
+    parts.push('    var body=document.getElementById("activityBody");if(!body)return;');
+    parts.push('    if(activityScope==="repository")body.innerHTML=renderRepositoryActivity(sessions);');
+    parts.push('    else if(activityScope==="session")body.innerHTML=renderSessionActivity(sessions);');
+    parts.push('    else body.innerHTML=renderOverallActivity(sessions);');
+    parts.push('  }');
+
     parts.push('  function updateCharts(sessions){');
     parts.push('    var metric=document.getElementById("metricType").value;');
     parts.push('    var breakdown=document.getElementById("breakdownType").value;');
@@ -855,7 +1074,8 @@ export class SessionsViewProvider {
     parts.push('    var labels={"healthy":"Healthy","warning":"Warn","stale":"Stale"};');
     parts.push('    var ageStr=cr.sessionAgeMinutes<60?Math.round(cr.sessionAgeMinutes)+"m":Math.floor(cr.sessionAgeMinutes/60)+"h"+(Math.round(cr.sessionAgeMinutes%60)>0?Math.round(cr.sessionAgeMinutes%60)+"m":"");');
     parts.push('    var growthNote=cr.turnsCount<6?" (limited: <6 turns)":"";');
-    parts.push('    var tip="Score: "+cr.score+"/10\\nTurns: "+cr.turnsCount+"\\nAge: "+ageStr+"\\nInput bloat: "+cr.inputBloatFactor.toFixed(1)+"x"+growthNote+"\\nOutput trend: "+cr.outputDeclineFactor.toFixed(2)+"x"+growthNote;');
+    parts.push('    var runwayStr=cr.contextRunway!=null?"\\nRunway: ~"+cr.contextRunway+" turns":"";');
+    parts.push('    var tip="Score: "+cr.score+"/10  CQ: "+cr.contextQualityScore+"/100\\nCache: "+cr.cacheEfficiencyRate+"%\\nTurns: "+cr.turnsCount+"\\nAge: "+ageStr+runwayStr+"\\nInput bloat: "+cr.inputBloatFactor.toFixed(1)+"x"+growthNote+"\\nOutput trend: "+cr.outputDeclineFactor.toFixed(2)+"x"+growthNote;');
     parts.push('    return"<td><span class=\\"ctx-badge ctx-"+cr.label+"\\" title=\\""+tip.replace(/"/g,\'&quot;\').replace(/\\n/g,\'&#10;\')+"\\">" +icons[cr.label]+" "+labels[cr.label]+"</span></td>";');
     parts.push('  }');
     parts.push('  function render(sessions){');

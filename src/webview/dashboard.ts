@@ -46,6 +46,18 @@ function tip(text: string): string {
   return `<span title="${text}" style="cursor:help;color:var(--text-secondary);font-size:0.85em;margin-left:3px;vertical-align:middle;">ⓘ</span>`;
 }
 
+function stageFromThresholds(value: number, thresholds: [number, number, number]): number {
+  if (value >= thresholds[2]) { return 4; }
+  if (value >= thresholds[1]) { return 3; }
+  if (value >= thresholds[0]) { return 2; }
+  return 1;
+}
+
+function countMatchingTools(toolCalls: Record<string, number>, pattern: RegExp): number {
+  return Object.entries(toolCalls).reduce((sum, [name, count]) =>
+    pattern.test(name) ? sum + count : sum, 0);
+}
+
 function buildModeSectionHtml(modeBreakdown: Record<string, number>): string {
   const total = Object.values(modeBreakdown).reduce((s, n) => s + n, 0);
   const rows = Object.keys(MODE_META).map(key => {
@@ -617,46 +629,62 @@ export class DashboardProvider {
     };
     const getStageBar = (stage: number) => '█'.repeat(stage) + '░'.repeat(4 - stage);
 
-    const interactions = m.currentMonth.interactions;
-    const sessions = m.currentMonth.sessions;
-    const avgExchanges = m.currentMonth.averageInteractionsPerSession;
-    const inputRatio = m.currentMonth.outputTokens > 0 ? m.currentMonth.inputTokens / m.currentMonth.outputTokens : 1;
-    const numTools = Object.keys(m.currentMonth.toolCalls || {}).length;
-    const numRepos = Object.keys(m.currentMonth.repositories || {}).filter(k => k !== 'Unknown').length;
-    const numModels = Object.keys(m.currentMonth.modelBreakdown || {}).length;
-    const agentTokens = (m.currentMonth.providerBreakdown['Claude Code'] || 0) +
-      (m.currentMonth.providerBreakdown['Antigravity'] || 0) +
-      (m.currentMonth.providerBreakdown['Codex'] || 0);
+    const month = m.currentMonth;
+    const interactions = month.interactions;
+    const sessions = month.sessions;
+    const avgExchanges = month.averageInteractionsPerSession;
+    const fluencyCacheHitPct = month.inputTokens > 0
+      ? Math.round((month.cacheReadTokens / month.inputTokens) * 100)
+      : 0;
+    const toolCalls = month.toolCalls || {};
+    const totalToolCalls = Object.values(toolCalls).reduce((s, n) => s + n, 0);
+    const numTools = Object.keys(toolCalls).length;
+    const numRepos = Object.keys(month.repositories || {}).filter(k => k !== 'Unknown').length;
+    const numModels = Object.keys(month.modelBreakdown || {}).length;
+    const modes = month.modeBreakdown || {};
+    const agentTurns = (modes.agent || 0) + (modes.customAgent || 0) + (modes.cli || 0);
+    const agentToolCalls = countMatchingTools(toolCalls, /(^task$|agent|subagent|delegate|handoff|worker)/i);
+    const agentProviderTokens = (month.providerBreakdown['Claude Code'] || 0) +
+      (month.providerBreakdown['Codex'] || 0);
+    const nowForFluency = new Date();
+    const activeDays = new Set(m.daily
+      .filter(d => {
+        const day = new Date(`${d.date}T00:00:00`);
+        return d.totalTokens > 0 &&
+          day.getFullYear() === nowForFluency.getFullYear() &&
+          day.getMonth() === nowForFluency.getMonth();
+      })
+      .map(d => d.date)).size;
 
-    let peStage = 1;
-    if (interactions >= 5) { peStage = 2; }
-    if (interactions >= 30 && avgExchanges >= 3) { peStage = 3; }
-    if (interactions >= 100 && avgExchanges >= 5) { peStage = 4; }
+    const peStage = Math.max(
+      stageFromThresholds(interactions, [5, 30, 100]),
+      avgExchanges >= 5 && interactions >= 30 ? 4 : avgExchanges >= 3 && interactions >= 15 ? 3 : 1,
+    );
 
-    let ceStage = 1;
-    if (inputRatio >= 3) { ceStage = 2; }
-    if (inputRatio >= 5) { ceStage = 3; }
-    if (inputRatio >= 10) { ceStage = 4; }
+    const contextVolumeStage = stageFromThresholds(month.inputTokens, [10_000, 50_000, 200_000]);
+    const cacheReuseStage = stageFromThresholds(fluencyCacheHitPct, [10, 25, 50]);
+    const ceStage = Math.max(contextVolumeStage, cacheReuseStage);
 
-    let agStage = 1;
-    if (agentTokens > 0) { agStage = 2; }
-    if (agentTokens > 10000) { agStage = 3; }
-    if (agentTokens > 50000) { agStage = 4; }
+    const agStage = Math.max(
+      stageFromThresholds(agentTurns, [1, 10, 30]),
+      stageFromThresholds(agentToolCalls, [1, 3, 10]),
+      stageFromThresholds(agentProviderTokens, [1, 10_000, 50_000]),
+    );
 
-    let tuStage = 1;
-    if (numTools >= 1) { tuStage = 2; }
-    if (numTools >= 3) { tuStage = 3; }
-    if (numTools >= 6) { tuStage = 4; }
+    const tuStage = Math.max(
+      stageFromThresholds(numTools, [1, 3, 6]),
+      stageFromThresholds(totalToolCalls, [3, 20, 75]),
+    );
 
-    let cuStage = 1;
-    if (numRepos >= 1 || numModels >= 2) { cuStage = 2; }
-    if (numRepos >= 2 || numModels >= 3) { cuStage = 3; }
-    if (numRepos >= 3 || numModels >= 5) { cuStage = 4; }
+    const cuStage = Math.max(
+      stageFromThresholds(numRepos, [1, 2, 3]),
+      stageFromThresholds(numModels, [2, 3, 5]),
+    );
 
-    let wiStage = 1;
-    if (sessions >= 3) { wiStage = 2; }
-    if (sessions >= 10) { wiStage = 3; }
-    if (sessions >= 20) { wiStage = 4; }
+    const wiStage = Math.max(
+      stageFromThresholds(sessions, [3, 10, 20]),
+      stageFromThresholds(activeDays, [2, 5, 12]),
+    );
 
     const stages = [peStage, ceStage, agStage, tuStage, cuStage, wiStage].sort((a, b) => a - b);
     const overallStage = Math.round((stages[2] + stages[3]) / 2) || 1;
@@ -758,7 +786,7 @@ export class DashboardProvider {
   </div>
   ${navTopbarHtml(logoUri, true, refreshing)}
   ${refreshing ? '<div class="loading-bar"><div class="loading-bar-fill"></div></div><div class="loading-banner"><div class="loading-spinner"></div>Refreshing dashboard…</div>' : ''}
-  ${navPagebarHtml('overview', 'Overview')}
+  ${navPagebarHtml('overview', 'Dashboard')}
   ${navFilterbarHtml()}
 
   <!-- ── Content area ──────────────────────────────────────────── -->
@@ -827,7 +855,7 @@ export class DashboardProvider {
     <div class="score-card" style="border-left: 4px solid ${getStageColor(overallStage)}">
       <div>
         <div style="font-size: 1.1em; font-weight: 600; margin-bottom: 6px;">Overall: ${overallLabels[overallStage]}</div>
-        <div style="font-size: 0.85em; color: var(--text-secondary);">Based on interaction volume, context ratio, tool usage, and model diversity</div>
+        <div style="font-size: 0.85em; color: var(--text-secondary);">Based on prompt depth, context reuse, agent activity, tool usage, customization, and workflow cadence</div>
       </div>
       <div style="text-align: right;">
         <div style="font-size: 1.8em; font-weight: 500; color: ${getStageColor(overallStage)}; letter-spacing: 2px;" class="data-text">${getStageBar(overallStage)}</div>
@@ -836,11 +864,11 @@ export class DashboardProvider {
     <div class="score-grid">
       ${[
         ['💬 Prompt Engineering', peStage, `${fmt(interactions)} interactions · ${avgExchanges.toFixed(1)} avg/session`],
-        ['📎 Context Engineering', ceStage, `${inputRatio.toFixed(1)}× input/output · ${fmt(m.currentMonth.inputTokens)} ctx tokens`],
-        ['🤖 Agentic Usage', agStage, `${fmt(agentTokens)} agent tokens`],
-        ['🔧 Tool Usage', tuStage, `${numTools} unique tools`],
+        ['📎 Context Engineering', ceStage, `${fmt(month.inputTokens)} input ctx · ${fluencyCacheHitPct}% cache hit`],
+        ['🤖 Agentic Usage', agStage, `${agentTurns} agent/CLI turns · ${agentToolCalls} agent tool calls · ${fmt(agentProviderTokens)} agent tokens`],
+        ['🔧 Tool Usage', tuStage, `${fmt(totalToolCalls)} calls · ${numTools} unique tools`],
         ['⚙️ Customization', cuStage, `${numModels} models · ${numRepos} repos`],
-        ['🔄 Workflow Integration', wiStage, `${sessions} sessions this month`],
+        ['🔄 Workflow Integration', wiStage, `${sessions} sessions · ${activeDays} active days`],
       ].map(([label, stage, detail]) => `
         <div class="sub-score-card">
           <div style="font-weight: 600; margin-bottom: 6px;">${label}</div>
@@ -1023,7 +1051,7 @@ export class DashboardProvider {
         var refreshBtn = document.getElementById('btnRefresh');
         if (refreshBtn) refreshBtn.textContent = '↺ Refresh';
         document.querySelectorAll('[data-nav]').forEach(function(btn) {
-          if (btn._origLabel) btn.textContent = btn._origLabel;
+          if (btn._origLabel) btn.innerHTML = btn._origLabel;
         });
         var overlay = document.getElementById('navOverlay');
         if (overlay) { overlay.style.display = 'none'; }
@@ -1031,7 +1059,7 @@ export class DashboardProvider {
 
       // Tab navigation buttons
       document.querySelectorAll('[data-nav]').forEach(function(btn) {
-        btn._origLabel = btn.textContent;
+        btn._origLabel = btn.innerHTML;
         btn.addEventListener('click', function() {
           btn.classList.add('is-loading');
           var overlay = document.getElementById('navOverlay');

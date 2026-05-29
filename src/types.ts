@@ -21,10 +21,20 @@ export interface Interaction {
   mode: string;
   /** Tool calls made during this interaction */
   toolCalls: string[];
+  /** Shell commands executed during this interaction */
+  commandRuns?: string[];
   /** File paths accessed via Read / Edit / Write tools in this interaction */
   fileAccesses?: Array<{ tool: string; path: string }>;
   /** First ~200 chars of the user message that triggered this interaction */
   promptPreview?: string;
+  /** True for synthetic compaction-boundary events (not real API turns) */
+  isCompactionEvent?: boolean;
+  /** Whether compaction was triggered automatically or manually */
+  compactionTrigger?: 'auto' | 'manual';
+  /** Context token count immediately before compaction */
+  preCompactionTokens?: number;
+  /** Context token count immediately after compaction */
+  postCompactionTokens?: number;
 }
 
 /** A normalized session from any provider */
@@ -383,13 +393,36 @@ export interface ContextTimelinePoint {
   timestamp: string; // ISO
 }
 
+export type OptimizationTechnique =
+  | 'caveman'        // Excessive Bash calls for debug-print output
+  | 'file_reread'    // Same file read multiple times across turns
+  | 'toon'           // Full file content returned when only excerpt needed
+  | 'early_compact'  // Context compaction wasn't used but would have helped
+  | 'output_trim'    // Model outputs are overly verbose
+  | 'prompt_dedupe'; // Repeated fragments in user prompts
+
+export interface OptimizationProposal {
+  technique: OptimizationTechnique;
+  title: string;
+  description: string;
+  /** Estimated tokens saved at peak context if technique had been applied */
+  estimatedSavings: number;
+  /** Savings as % of peak context window */
+  savingsPct: number;
+  /** Human-readable evidence from the session data */
+  evidence: string;
+}
+
 export type OverloadSignalType =
   | 'high_input_output_ratio'
   | 'long_turn_chain'
   | 'repeated_tool_failures'
   | 'large_static_context'
   | 'output_collapse'
-  | 'tool_loop';
+  | 'tool_loop'
+  | 'cache_thrash'
+  | 'thinking_overload'
+  | 'lost_in_middle';
 
 export interface OverloadSignal {
   type: OverloadSignalType;
@@ -429,6 +462,42 @@ export interface ContextRotAnalysis {
   restartReason: string;
   rehydrationChecklist: string[];
   freshSessionBrief: FreshSessionBrief;
+  /** Estimated turns remaining before hitting context limit at current growth rate; null if not estimable */
+  contextRunway: number | null;
+  growthCurve: ContextGrowthCurve;
+  /** 0–100: percentage of cumulative input tokens served from cache */
+  cacheEfficiencyRate: number;
+  cacheThrashDetected: boolean;
+  thinkingEfficiencyTrend: 'rising' | 'stable' | 'falling' | 'none';
+  contextBudgetAllocation: ContextBudgetAllocation;
+  /** 0–100: risk that critical context is lost in the middle of a large context window */
+  lostInMiddleRisk: number;
+  /** 0–100: composite context quality score */
+  contextQualityScore: number;
+  sessionSiblings: SessionSiblingRef[];
+  /** Ranked list of context-engineering optimizations with estimated token savings */
+  optimizationProposals: OptimizationProposal[];
+}
+
+export type ContextGrowthCurve = 'linear' | 'exponential' | 'plateau' | 'spike';
+
+export interface ContextBudgetAllocation {
+  cachedTokens: number;
+  freshInputTokens: number;
+  cacheWriteTokens: number;
+  outputTokens: number;
+  thinkingTokens: number;
+  cachedPct: number;
+  freshInputPct: number;
+  cacheWritePct: number;
+  outputPct: number;
+  thinkingPct: number;
+}
+
+export interface SessionSiblingRef {
+  sessionId: string;
+  startTime: string;
+  title?: string;
 }
 
 /** File cache entry for tracking modifications */
