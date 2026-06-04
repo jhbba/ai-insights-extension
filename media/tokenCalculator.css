@@ -103,6 +103,14 @@ body {
   background: var(--vscode-button-secondaryHoverBackground);
 }
 
+.tc-btn-open {
+  border: 1px solid var(--vscode-focusBorder, rgba(128,128,128,0.4));
+}
+
+.tc-btn-open:hover {
+  border-color: var(--vscode-focusBorder, rgba(128,128,128,0.7));
+}
+
 .tc-file-list {
   flex: 1;
   overflow-y: auto;

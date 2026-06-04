@@ -42,14 +42,16 @@
   /** @type {Set<string>} collapsed folder paths */
   const collapsedFolders = new Set()
 
-  let addingAll     = false
-  let addAllPending = 0
+  let addingAll      = false
+  let addAllPending  = 0
+  let addingOpen     = false
   let activeProvider = 'copilot'
 
   const elSearch        = /** @type {HTMLInputElement}    */ (document.getElementById('file-search'))
   const elFileList      = /** @type {HTMLDivElement}      */ (document.getElementById('file-list'))
   const elPrompt        = /** @type {HTMLTextAreaElement} */ (document.getElementById('prompt'))
   const elPromptQuality = /** @type {HTMLDivElement}      */ (document.getElementById('prompt-quality'))
+  const elBtnOpenFiles  = /** @type {HTMLButtonElement}   */ (document.getElementById('btn-open-files'))
   const elBtnAddAll     = /** @type {HTMLButtonElement}   */ (document.getElementById('btn-add-all'))
   const elBtnClear      = /** @type {HTMLButtonElement}   */ (document.getElementById('btn-clear'))
   const elModelList     = /** @type {HTMLDivElement}      */ (document.getElementById('tc-model-list'))
@@ -409,6 +411,14 @@
 
   elSearch.addEventListener('input', renderFileList)
 
+  elBtnOpenFiles.addEventListener('click', () => {
+    if (addingOpen) return
+    addingOpen = true
+    elBtnOpenFiles.disabled = true
+    elBtnOpenFiles.textContent = 'Loading...'
+    vscode.postMessage({ type: 'get_open_files' })
+  })
+
   elBtnAddAll.addEventListener('click', () => {
     if (addingAll) return
     addingAll = true
@@ -451,7 +461,7 @@
       refreshRowBadge(msg.path)
       if (selectedPaths.has(msg.path)) updateStats()
 
-      if (addingAll) {
+      if (addingAll || addingOpen) {
         selectedPaths.add(msg.path)
         const row = elFileList.querySelector(`.tc-tree-file[data-path="${CSS.escape(msg.path)}"]`)
         if (row) {
@@ -459,7 +469,7 @@
           const cb = /** @type {HTMLInputElement|null} */ (row.querySelector('.tc-file-cb'))
           if (cb) cb.checked = true
         }
-        addAllPending = Math.max(0, addAllPending - 1)
+        if (addingAll) addAllPending = Math.max(0, addAllPending - 1)
         updateStats()
       }
     }
@@ -475,6 +485,20 @@
       addAllPending = 0
       elBtnAddAll.disabled = false
       elBtnAddAll.textContent = 'Add all'
+      updateStats()
+    }
+
+    else if (msg.type === 'open_files_start') {
+      // content arrives via file_content messages (addingOpen flag routes them)
+    }
+
+    else if (msg.type === 'open_files_done') {
+      for (const f of (msg.files || [])) selectedPaths.add(f.path)
+      addingOpen = false
+      elBtnOpenFiles.disabled = false
+      const count = (msg.files || []).length
+      elBtnOpenFiles.textContent = count ? `Open files (${count})` : 'Open files'
+      renderFileList()
       updateStats()
     }
   })

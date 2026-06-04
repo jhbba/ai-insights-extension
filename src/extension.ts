@@ -18,6 +18,8 @@ import { ChartsProvider } from './webview/charts';
 import { DiagnosticsProvider } from './webview/diagnostics';
 import { UsageAnalysisProvider } from './webview/usageAnalysis';
 import { SessionsViewProvider } from './webview/sessionsView';
+import { SessionCompareProvider } from './webview/sessionCompareView';
+import { SessionTagsStore } from './core/sessionTagsStore';
 import { PricingViewProvider } from './webview/pricingView';
 import { buildHygieneReports } from './core/repositoryHygiene';
 import { AcceptanceTracker } from './core/acceptanceTracker';
@@ -31,6 +33,7 @@ import { ClaudeAccountViewProvider } from './webview/claudeAccountView';
 import { detectLiveSessions } from './core/liveSessionMonitor';
 import { SessionSnapshotStore } from './core/sessionSnapshotStore';
 import { LiveContextTracker, LiveContextInfo } from './core/liveContextTracker';
+import { LiveTokenCounter } from './core/liveTokenCounter';
 import { LiveBudgetConfig, RateLimitEvent } from './types';
 
 let statusBarItem: vscode.StatusBarItem;
@@ -44,6 +47,7 @@ const cacheManager = new CacheManager();
 let snapshotStore: SessionSnapshotStore;
 const promptHistoryStore = new PromptHistoryStore();
 const acceptanceTracker = new AcceptanceTracker();
+let sessionTagsStore: SessionTagsStore;
 const DEFAULT_SESSION_LOOKBACK_DAYS = 400;
 const GITHUB_USER_STATE_KEY = 'aiInsights.githubUser';
 const LIVE_BUDGET_CONFIG_KEY = 'aiInsights.liveBudgetConfig';
@@ -58,7 +62,18 @@ export function activate(context: vscode.ExtensionContext) {
   liveBudgetConfig = context.globalState.get<LiveBudgetConfig | null>(LIVE_BUDGET_CONFIG_KEY, null);
   rateLimitEvents = context.globalState.get<RateLimitEvent[]>(RATE_LIMIT_EVENTS_KEY, []);
   snapshotStore = new SessionSnapshotStore(context.globalStorageUri.fsPath);
+  sessionTagsStore = new SessionTagsStore(context.globalStorageUri.fsPath);
   acceptanceTracker.register(context);
+
+  // Wire tag callbacks so the sessions view can persist tag changes
+  SessionsViewProvider._addTag = (sessionId, tag) => {
+    sessionTagsStore.addTag(sessionId, tag);
+    SessionsViewProvider.pushUpdate(context, allSessions, getLiveSessions(), liveBudgetConfig, false, sessionTagsStore.getAll());
+  };
+  SessionsViewProvider._removeTag = (sessionId, tag) => {
+    sessionTagsStore.removeTag(sessionId, tag);
+    SessionsViewProvider.pushUpdate(context, allSessions, getLiveSessions(), liveBudgetConfig, false, sessionTagsStore.getAll());
+  };
 
   const providers = getEnabledProviders();
 
@@ -76,6 +91,9 @@ export function activate(context: vscode.ExtensionContext) {
   liveTracker.start(context.subscriptions);
   context.subscriptions.push(liveTracker);
 
+  const liveTokenCounter = new LiveTokenCounter();
+  liveTokenCounter.start(context.subscriptions);
+
   context.subscriptions.push(
     vscode.commands.registerCommand('aiInsights.refresh', () => refresh(providers)),
     vscode.commands.registerCommand('aiInsights.showDashboard', () => showDashboard(context)),
@@ -84,6 +102,10 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('aiInsights.showUsageAnalysis', () => showUsageAnalysis(context)),
     vscode.commands.registerCommand('aiInsights.showSessions', () => showSessionsView(context)),
     vscode.commands.registerCommand('aiInsights.showSessionsView', () => showSessionsView(context)),
+    vscode.commands.registerCommand('aiInsights.compareSessionsView', (sessionIds: string[]) => {
+      const sessions = allSessions.filter(s => sessionIds.includes(s.id));
+      if (sessions.length >= 2) { SessionCompareProvider.createPanel(context, sessions); }
+    }),
     vscode.commands.registerCommand('aiInsights.showPricing', () => showPricing(context)),
     vscode.commands.registerCommand('aiInsights.connectGitHub', () => handleConnectGitHub(context)),
     vscode.commands.registerCommand('aiInsights.disconnectGitHub', () => handleDisconnectGitHub(context)),
@@ -97,12 +119,17 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('aiInsights.saveLiveBudgetConfig', (cfg: LiveBudgetConfig) =>
       handleSaveLiveBudgetConfig(context, cfg),
     ),
+    vscode.commands.registerCommand('aiInsights.changeTokenModel', () => liveTokenCounter.cycleFamily()),
+    vscode.commands.registerCommand('aiInsights.toggleTokenHighlight', () => liveTokenCounter.toggleHighlight()),
+    vscode.commands.registerCommand('aiInsights.configureTokenHighlightColors', () =>
+      vscode.commands.executeCommand('workbench.action.openSettings', 'aiInsights.tokenCounter'),
+    ),
   );
 
   refresh(providers);
 
   activeSessionsTimer = setInterval(() => {
-    SessionsViewProvider.pushUpdate(context, allSessions, getLiveSessions(), liveBudgetConfig);
+    SessionsViewProvider.pushUpdate(context, allSessions, getLiveSessions(), liveBudgetConfig, false, sessionTagsStore.getAll());
   }, 30_000);
   context.subscriptions.push({ dispose: () => { if (activeSessionsTimer) { clearInterval(activeSessionsTimer); } } });
 
@@ -442,9 +469,9 @@ async function showUsageAnalysis(context: vscode.ExtensionContext) {
 }
 
 function showSessionsView(context: vscode.ExtensionContext) {
-  SessionsViewProvider.createPanel(context, allSessions, getLiveSessions(), liveBudgetConfig);
+  SessionsViewProvider.createPanel(context, allSessions, getLiveSessions(), liveBudgetConfig, false, sessionTagsStore.getAll());
   refresh(getEnabledProviders()).then(() => {
-    SessionsViewProvider.createPanel(context, allSessions, getLiveSessions(), liveBudgetConfig);
+    SessionsViewProvider.createPanel(context, allSessions, getLiveSessions(), liveBudgetConfig, false, sessionTagsStore.getAll());
   });
 }
 

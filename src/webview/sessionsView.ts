@@ -29,6 +29,7 @@ type SessionRow = {
   fileEdits: Record<string, number>;
   toolCalls: Record<string, number>;
   commandRuns: Record<string, number>;
+  tags: string[];
 };
 
 export class SessionsViewProvider {
@@ -40,6 +41,12 @@ export class SessionsViewProvider {
   private static _overlayOpen = false;
   /** Pending update to apply once overlay closes. */
   private static _pendingUpdate: (() => void) | null = null;
+  /** Latest tags map for re-render after tag changes. */
+  private static _tagsMap: Record<string, string[]> = {};
+  /** Called by extension after a tag is added; extension handles persistence and triggers pushUpdate. */
+  static _addTag: ((sessionId: string, tag: string) => void) | undefined;
+  /** Called by extension after a tag is removed; extension handles persistence and triggers pushUpdate. */
+  static _removeTag: ((sessionId: string, tag: string) => void) | undefined;
 
   static createPanel(
     context: vscode.ExtensionContext,
@@ -47,9 +54,11 @@ export class SessionsViewProvider {
     liveSessions: LiveSessionState[] = [],
     budgetConfig: LiveBudgetConfig | null = null,
     refreshing = false,
+    tagsMap: Record<string, string[]> = {},
   ): vscode.WebviewPanel {
     SessionsViewProvider._sessions = sessions;
-    const rows = SessionsViewProvider.toRows(sessions);
+    SessionsViewProvider._tagsMap = tagsMap;
+    const rows = SessionsViewProvider.toRows(sessions, tagsMap);
     const logoPath = vscode.Uri.joinPath(context.extensionUri, 'assets', 'logo.png');
 
     if (SessionsViewProvider.currentPanel) {
@@ -112,6 +121,12 @@ export class SessionsViewProvider {
           vscode.workspace.openTextDocument(vscode.Uri.file(message.sourceFile))
             .then(doc => vscode.window.showTextDocument(doc))
             .then(undefined, () => vscode.window.showErrorMessage(`Cannot open: ${message.sourceFile}`));
+        } else if (message.command === 'compareSelectedSessions' && Array.isArray(message.sessionIds) && message.sessionIds.length >= 2) {
+          vscode.commands.executeCommand('aiInsights.compareSessionsView', message.sessionIds);
+        } else if (message.command === 'addTag' && message.sessionId && message.tag) {
+          SessionsViewProvider._addTag?.(message.sessionId, String(message.tag));
+        } else if (message.command === 'removeTag' && message.sessionId && message.tag) {
+          SessionsViewProvider._removeTag?.(message.sessionId, String(message.tag));
         } else if (message.command === 'exportSessions' && message.csv) {
           vscode.workspace.openTextDocument({ content: message.csv, language: 'csv' })
             .then(doc => vscode.window.showTextDocument(doc, vscode.ViewColumn.Two));
@@ -144,14 +159,16 @@ export class SessionsViewProvider {
     liveSessions: LiveSessionState[] = [],
     budgetConfig: LiveBudgetConfig | null = null,
     refreshing = false,
+    tagsMap: Record<string, string[]> = {},
   ): void {
     SessionsViewProvider._sessions = sessions;
+    SessionsViewProvider._tagsMap = tagsMap;
     if (!SessionsViewProvider.currentPanel) { return; }
     const doUpdate = () => {
       if (!SessionsViewProvider.currentPanel) { return; }
       const logoPath = vscode.Uri.joinPath(context.extensionUri, 'assets', 'logo.png');
       const logoUri = SessionsViewProvider.currentPanel.webview.asWebviewUri(logoPath).toString();
-      const rows = SessionsViewProvider.toRows(SessionsViewProvider._sessions);
+      const rows = SessionsViewProvider.toRows(SessionsViewProvider._sessions, SessionsViewProvider._tagsMap);
       SessionsViewProvider.currentPanel.webview.html = SessionsViewProvider.buildHtml(
         rows,
         liveSessions,
@@ -167,7 +184,7 @@ export class SessionsViewProvider {
     }
   }
 
-  private static toRows(sessions: Session[]): SessionRow[] {
+  private static toRows(sessions: Session[], tagsMap: Record<string, string[]> = {}): SessionRow[] {
     return [...sessions]
       .sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime())
       .map(s => {
@@ -216,6 +233,7 @@ export class SessionsViewProvider {
           fileEdits,
           toolCalls,
           commandRuns,
+          tags: tagsMap[s.id] ?? [],
         };
       });
   }
@@ -297,6 +315,24 @@ export class SessionsViewProvider {
     parts.push('.data-text{font-family:var(--font-data);}');
     parts.push('.btn-open{background:transparent;border:1px solid var(--border);color:var(--text-secondary);padding:3px 8px;border-radius:3px;cursor:pointer;font-size:0.78em;white-space:nowrap;transition:all 0.15s;}');
     parts.push('.btn-open:hover{border-color:var(--primary);color:var(--primary);}');
+    parts.push('.row-check{width:15px;height:15px;cursor:pointer;accent-color:var(--primary);flex-shrink:0;}');
+    parts.push('tr.row-selected td{background:rgba(0,122,255,0.06)!important;}');
+    parts.push('.compare-bar{position:fixed;bottom:0;left:0;right:0;z-index:8000;background:var(--bg-surface-high);border-top:1px solid rgba(0,122,255,0.4);padding:12px 32px;display:none;align-items:center;gap:14px;box-shadow:0 -4px 24px rgba(0,122,255,0.14);}');
+    parts.push('.compare-bar.visible{display:flex;}');
+    parts.push('.compare-bar-info{flex:1;font-size:0.88em;color:var(--text-secondary);}');
+    parts.push('.compare-bar-count{font-weight:700;color:var(--primary);}');
+    parts.push('.btn-compare{background:var(--primary);color:#fff;border:none;padding:8px 20px;border-radius:6px;cursor:pointer;font-size:0.88em;font-weight:600;box-shadow:0 0 16px rgba(0,122,255,0.3);transition:background 0.15s;}');
+    parts.push('.btn-compare:hover{background:#005bc1;}');
+    parts.push('.btn-clear-sel{background:transparent;border:1px solid var(--border);color:var(--text-secondary);padding:7px 14px;border-radius:6px;cursor:pointer;font-size:0.85em;transition:all 0.15s;}');
+    parts.push('.btn-clear-sel:hover{border-color:rgba(255,255,255,0.2);color:var(--text-primary);}');
+    parts.push('.tags-cell{min-width:120px;max-width:220px;}');
+    parts.push('.tag-chip{display:inline-flex;align-items:center;gap:3px;padding:1px 7px;background:rgba(0,122,255,0.1);border:1px solid rgba(0,122,255,0.25);border-radius:12px;font-size:0.72em;color:var(--primary);margin:1px 2px;white-space:nowrap;}');
+    parts.push('.tag-rm{background:none;border:none;color:rgba(0,122,255,0.6);cursor:pointer;padding:0 1px;font-size:0.9em;line-height:1;transition:color 0.1s;}');
+    parts.push('.tag-rm:hover{color:#FF3B30;}');
+    parts.push('.btn-tag-add{background:transparent;border:1px dashed rgba(255,255,255,0.15);color:var(--text-secondary);width:18px;height:18px;border-radius:50%;cursor:pointer;font-size:0.85em;line-height:16px;text-align:center;padding:0;transition:all 0.15s;vertical-align:middle;margin-left:1px;}');
+    parts.push('.btn-tag-add:hover{border-color:var(--primary);color:var(--primary);}');
+    parts.push('.tag-input{background:var(--bg-base);border:1px solid var(--primary);color:var(--text-primary);padding:1px 7px;border-radius:10px;font-size:0.75em;width:90px;outline:none;vertical-align:middle;margin-left:3px;}');
+    parts.push('.chk-cell{width:32px;text-align:center;}');
     parts.push('.approx-price{font-family:var(--font-data);font-size:0.82em;color:var(--text-secondary);}');
     parts.push('.ctx-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:3px;font-size:0.78em;font-weight:600;white-space:nowrap;cursor:default;}');
     parts.push('.ctx-healthy{background:rgba(0,200,100,0.1);color:#00c864;}');
@@ -523,6 +559,7 @@ export class SessionsViewProvider {
     parts.push('  <div class="filter-group"><span class="filter-label">Metric</span><select id="metricType"><option value="tokens">Token Consumption</option><option value="sessions">Usage (Sessions)</option></select></div>');
     parts.push('  <div class="filter-group"><span class="filter-label">By</span><select id="breakdownType"><option value="provider">Provider</option><option value="model">Model</option><option value="workspace">Repository</option></select></div>');
     parts.push('  <input type="text" id="searchFilter" placeholder="Search sessions, models, repos..." />');
+    parts.push('  <div class="filter-group"><span class="filter-label">Tag</span><select id="tagFilter"><option value="">All tags</option></select></div>');
     parts.push('</div>');
 
     parts.push('<div class="chart-section">');
@@ -568,6 +605,13 @@ export class SessionsViewProvider {
     parts.push('<div class="footer">Deep session analysis for AI-assisted development. Data updated in real-time.</div>');
     parts.push('</div><!-- /ns-content -->');
 
+    // Compare bar — shown when 2+ sessions are selected
+    parts.push('<div class="compare-bar" id="compareBar">');
+    parts.push('  <span class="compare-bar-info"><span class="compare-bar-count" id="compareCount">0</span> session(s) selected</span>');
+    parts.push('  <button class="btn-compare" onclick="compareSelected()">Compare Sessions</button>');
+    parts.push('  <button class="btn-clear-sel" onclick="clearSelection()">Clear</button>');
+    parts.push('</div>');
+
     // Overlay must be in the DOM before scripts execute so getElementById succeeds
     parts.push('<div class="analyze-overlay" id="analyzeOverlay">');
     parts.push('  <div class="analyze-panel">');
@@ -598,6 +642,15 @@ export class SessionsViewProvider {
     parts.push('  var currentPage=0;');
     parts.push('  var PAGE_SIZE=50;');
     parts.push('  var activityScope="overall";');
+    parts.push('  var selectedIds=new Set();');
+    parts.push('  function toggleRow(idx){var s=currentFiltered[idx];if(!s)return;if(selectedIds.has(s.id))selectedIds.delete(s.id);else selectedIds.add(s.id);updateCompareBar();var tr=document.querySelector("tr[data-idx=\'"+idx+"\']");if(tr)tr.classList.toggle("row-selected",selectedIds.has(s.id));}');
+    parts.push('  function updateCompareBar(){var bar=document.getElementById("compareBar");var cnt=document.getElementById("compareCount");if(bar){if(selectedIds.size>=2)bar.classList.add("visible");else bar.classList.remove("visible");}if(cnt)cnt.textContent=String(selectedIds.size);}');
+    parts.push('  function clearSelection(){selectedIds.clear();updateCompareBar();document.querySelectorAll("tr.row-selected").forEach(function(r){r.classList.remove("row-selected");});document.querySelectorAll("input.row-check").forEach(function(c){c.checked=false;});}');
+    parts.push('  function compareSelected(){if(selectedIds.size<2)return;vscode.postMessage({command:"compareSelectedSessions",sessionIds:Array.from(selectedIds)});}');
+    parts.push('  window.toggleRow=toggleRow;window.clearSelection=clearSelection;window.compareSelected=compareSelected;');
+    parts.push('  function addTagToSession(id,tag){tag=tag.trim().toLowerCase().replace(/\\s+/g,"-").slice(0,32);if(!tag)return;vscode.postMessage({command:"addTag",sessionId:id,tag:tag});var s=ALL_SESSIONS.find(function(x){return x.id===id;});if(s){if(!s.tags)s.tags=[];if(!s.tags.includes(tag)){s.tags.push(tag);rebuildTagFilter();applyFilters();}}}');
+    parts.push('  function removeTagFromSession(id,tag){vscode.postMessage({command:"removeTag",sessionId:id,tag:tag});var s=ALL_SESSIONS.find(function(x){return x.id===id;});if(s){s.tags=(s.tags||[]).filter(function(t){return t!==tag;});rebuildTagFilter();applyFilters();}}');
+    parts.push('  function rebuildTagFilter(){var sel=document.getElementById("tagFilter");if(!sel)return;var cur=sel.value;var tags={};ALL_SESSIONS.forEach(function(s){(s.tags||[]).forEach(function(t){tags[t]=true;});});sel.innerHTML="<option value=\\"\\">All tags</option>";Object.keys(tags).sort().forEach(function(t){var o=document.createElement("option");o.value=t;o.textContent=t;if(t===cur)o.selected=true;sel.appendChild(o);});}');
     parts.push('  Chart.defaults.font.family="var(--font-primary)";');
     parts.push('  Chart.defaults.color="#c1c6d7";');
 
@@ -619,6 +672,22 @@ export class SessionsViewProvider {
     parts.push('  document.getElementById("metricType").onchange=applyFilters;');
     parts.push('  document.getElementById("breakdownType").onchange=applyFilters;');
     parts.push('  document.getElementById("searchFilter").oninput=applyFilters;');
+    parts.push('  document.getElementById("tagFilter").onchange=applyFilters;');
+    parts.push('  rebuildTagFilter();');
+    // Tag interactions via event delegation on tableContainer
+    parts.push('  document.getElementById("tableContainer").addEventListener("click",function(e){');
+    parts.push('    var rm=e.target.closest("[data-rm-idx]");');
+    parts.push('    if(rm){var idx=+rm.dataset.rmIdx;var tag=rm.dataset.rmTag;var s=currentFiltered[idx];if(s)removeTagFromSession(s.id,tag);return;}');
+    parts.push('    var ab=e.target.closest("[data-add-idx]");');
+    parts.push('    if(ab){var idx2=+ab.dataset.addIdx;var inp=document.getElementById("ti"+idx2);if(inp){inp.style.display="inline-block";inp.focus();}}');
+    parts.push('  });');
+    parts.push('  document.getElementById("tableContainer").addEventListener("keydown",function(e){');
+    parts.push('    if(!e.target.classList.contains("tag-input"))return;');
+    parts.push('    var idx=+e.target.dataset.idx;');
+    parts.push('    if(e.key==="Enter"){var s=currentFiltered[idx];var v=e.target.value.trim();if(s&&v){addTagToSession(s.id,v);e.target.value="";e.target.style.display="none";}}');
+    parts.push('    if(e.key==="Escape"){e.target.style.display="none";}');
+    parts.push('  });');
+    parts.push('  document.getElementById("tableContainer").addEventListener("focusout",function(e){if(e.target.classList.contains("tag-input"))setTimeout(function(){if(e.target===document.activeElement)return;e.target.style.display="none";},200);});');
     parts.push('  document.querySelectorAll(".scope-tab").forEach(function(btn){btn.addEventListener("click",function(){activityScope=btn.getAttribute("data-scope")||"overall";document.querySelectorAll(".scope-tab").forEach(function(b){b.classList.toggle("active",b===btn);});updateActivity(currentFiltered);});});');
 
     parts.push('  function openSession(idx){var s=currentFiltered[idx];if(s&&s.sourceFile)vscode.postMessage({command:"openSession",sourceFile:s.sourceFile});}');
@@ -888,6 +957,7 @@ export class SessionsViewProvider {
     parts.push('    var pv=document.getElementById("providerFilter").value;');
     parts.push('    var dv=document.getElementById("dateFilter").value;');
     parts.push('    var sv=document.getElementById("searchFilter").value.toLowerCase().trim();');
+    parts.push('    var tv=document.getElementById("tagFilter").value;');
     parts.push('    var now=new Date();');
     parts.push('    var todayStart=new Date(now.getFullYear(),now.getMonth(),now.getDate()).getTime();');
     parts.push('    var yearStart=new Date(now.getFullYear(),0,1).getTime();');
@@ -908,8 +978,10 @@ export class SessionsViewProvider {
     parts.push('        var w=(s.workspace||"").toLowerCase();');
     parts.push('        var m=(s.models||[]).join(" ").toLowerCase();');
     parts.push('        var t=(s.title||"").toLowerCase();');
-    parts.push('        if(!w.includes(sv)&&!m.includes(sv)&&!t.includes(sv))return false;');
+    parts.push('        var tg=(s.tags||[]).join(" ").toLowerCase();');
+    parts.push('        if(!w.includes(sv)&&!m.includes(sv)&&!t.includes(sv)&&!tg.includes(sv))return false;');
     parts.push('      }');
+    parts.push('      if(tv&&!(s.tags||[]).includes(tv))return false;');
     parts.push('      return true;');
     parts.push('    });');
 
@@ -1093,12 +1165,15 @@ export class SessionsViewProvider {
     parts.push('      var titleCell=s.title?"<span class=\\"title-cell\\" title=\\""+esc(s.title)+"\\">" +esc(s.title)+"</span>":"<span style=\\"opacity:0.3\\">-</span>";');
     parts.push('      var openBtn=s.sourceFile?"<button class=\\"btn-open\\" onclick=\\"openSession("+idx+")\\">Open</button>":"";');
     parts.push('      var analyzeBtn="<button class=\\"btn-open\\" onclick=\\"analyzeSession("+idx+")\\" title=\\"Context Workbench\\">Analyze</button>";');
-    parts.push('      return "<tr><td class=\\"data-text\\">"+fmtDate(s.startTime)+"</td><td>"+badge(s.provider,s.providerName)+"</td><td>"+titleCell+"</td><td><span class=\\"ws-cell\\" title=\\""+esc(s.workspace||"")+"\\">"+ esc(repo)+"</span></td><td class=\\"data-text\\" style=\\"font-weight:600\\">"+fmt(s.totalTokens)+"</td>"+breakdown(s)+costCell(s)+contextHealthCell(s)+"<td class=\\"data-text\\">"+s.interactions+"</td><td>"+mods+"</td><td class=\\"data-text\\" style=\\"color:var(--text-secondary)\\">"+fmtDur(s.startTime,s.endTime)+"</td><td style=\\"white-space:nowrap\\">"+analyzeBtn+" "+openBtn+"</td></tr>";');
+    parts.push('      var chkHtml="<td class=\\"chk-cell\\"><input type=\\"checkbox\\" class=\\"row-check\\" data-idx=\\""+idx+"\\" "+(selectedIds.has(s.id)?"checked":"")+" onchange=\\"toggleRow("+idx+")\\" title=\\"Select for comparison\\"></td>";');
+    parts.push('      var tagChips=(s.tags||[]).map(function(tg){return"<span class=\\"tag-chip\\">"+esc(tg)+"<button class=\\"tag-rm\\" data-rm-idx=\\""+idx+"\\" data-rm-tag=\\""+esc(tg)+"\\" title=\\"Remove tag\\">&#215;</button></span>";}).join("");');
+    parts.push('      var tagCell="<td class=\\"tags-cell\\">"+tagChips+"<button class=\\"btn-tag-add\\" data-add-idx=\\""+idx+"\\" title=\\"Add tag\\">+</button><input class=\\"tag-input\\" id=\\"ti"+idx+"\\" data-idx=\\""+idx+"\\" placeholder=\\"tag…\\" style=\\"display:none\\"></td>";');
+    parts.push('      return "<tr data-idx=\\""+idx+"\\">"+chkHtml+"<td class=\\"data-text\\">"+fmtDate(s.startTime)+"</td><td>"+badge(s.provider,s.providerName)+"</td><td>"+titleCell+"</td><td><span class=\\"ws-cell\\" title=\\""+esc(s.workspace||"")+"\\">"+ esc(repo)+"</span></td><td class=\\"data-text\\" style=\\"font-weight:600\\">"+fmt(s.totalTokens)+"</td>"+breakdown(s)+costCell(s)+contextHealthCell(s)+"<td class=\\"data-text\\">"+s.interactions+"</td><td>"+mods+"</td><td class=\\"data-text\\" style=\\"color:var(--text-secondary)\\">"+fmtDur(s.startTime,s.endTime)+"</td>"+tagCell+"<td style=\\"white-space:nowrap\\">"+analyzeBtn+" "+openBtn+"</td></tr>";');
     parts.push('    }).join("");');
     parts.push('    var pgHtml=totalPages>1?"<div class=\\"pagination\\"><button onclick=\\"goToPage("+(currentPage-1)+")\\" "+(currentPage===0?"disabled":"")+">&#8592; Prev</button><span class=\\"page-info\\">Page "+(currentPage+1)+" of "+totalPages+" &middot; "+sessions.length+" sessions</span><button onclick=\\"goToPage("+(currentPage+1)+")\\" "+(currentPage>=totalPages-1?"disabled":"")+">Next &#8594;</button></div>":"";');
     parts.push('    var ctxHint="Context Health \\u24d8";');
     parts.push('    var ctxTip="Score 0\\u201310 from 5 signals:\\n\\u2022 Turn count  (>40 turns \\u2192 +1, >80 \\u2192 +2)\\n\\u2022 Session age  (>60 min \\u2192 +1, >120 min \\u2192 +2)\\n\\u2022 Input bloat  last-third vs first-third avg input (>1.5\\u00d7 \\u2192 +1, >2\\u00d7 \\u2192 +2, >4\\u00d7 \\u2192 +3)\\n\\u2022 Output decline  last-third vs first-third avg output (<0.65\\u00d7 \\u2192 +1, <0.4\\u00d7 \\u2192 +2)\\n\\u2022 Total input size  (>80K \\u2192 +1, >200K \\u2192 +2)\\n\\nGrowth signals require \\u22656 turns to activate.\\n\\n\\u25cf 0\\u20133 Healthy  \\u25cf 4\\u20136 Warn  \\u25cf 7\\u201310 Stale";');
-    parts.push('    document.getElementById("tableContainer").innerHTML="<table><thead><tr><th class=\\""+thc("startTime")+"\\" onclick=\\"sortBy(\'startTime\')\\">Date"+arrow("startTime")+"</th><th>Provider</th><th>Session</th><th>Workspace</th><th class=\\""+thc("totalTokens")+"\\" onclick=\\"sortBy(\'totalTokens\')\\">Tokens"+arrow("totalTokens")+"</th><th>Breakdown</th><th>Cost</th><th style=\\"cursor:help\\" title=\\""+ctxTip.replace(/"/g,\'&quot;\').replace(/\\n/g,\'&#10;\')+"\\">" +ctxHint+"</th><th class=\\""+thc("interactions")+"\\" onclick=\\"sortBy(\'interactions\')\\">Interactions"+arrow("interactions")+"</th><th>Models</th><th>Duration</th><th></th></tr></thead><tbody>"+rows+"</tbody></table>"+pgHtml;');
+    parts.push('    document.getElementById("tableContainer").innerHTML="<table><thead><tr><th class=\\"chk-cell\\" title=\\"Select for comparison\\"></th><th class=\\""+thc("startTime")+"\\" onclick=\\"sortBy(\'startTime\')\\">Date"+arrow("startTime")+"</th><th>Provider</th><th>Session</th><th>Workspace</th><th class=\\""+thc("totalTokens")+"\\" onclick=\\"sortBy(\'totalTokens\')\\">Tokens"+arrow("totalTokens")+"</th><th>Breakdown</th><th>Cost</th><th style=\\"cursor:help\\" title=\\""+ctxTip.replace(/"/g,\'&quot;\').replace(/\\n/g,\'&#10;\')+"\\">" +ctxHint+"</th><th class=\\""+thc("interactions")+"\\" onclick=\\"sortBy(\'interactions\')\\">Interactions"+arrow("interactions")+"</th><th>Models</th><th>Duration</th><th>Tags</th><th></th></tr></thead><tbody>"+rows+"</tbody></table>"+pgHtml;');
     parts.push('  }');
 
     parts.push('  function sortBy(k){sortDir=sortKey===k?-sortDir:-1;sortKey=k;currentPage=0;applyFilters();}');

@@ -63,6 +63,15 @@ export class TokenCalculatorProvider {
           }
           panel.webview.postMessage({ type: 'all_files_done' })
         }
+        else if (msg.type === 'get_open_files') {
+          const openFiles = getOpenEditorFiles()
+          panel.webview.postMessage({ type: 'open_files_start', total: openFiles.length })
+          for (const file of openFiles) {
+            const content = await readWorkspaceFile(file.path)
+            panel.webview.postMessage({ type: 'file_content', path: file.path, content })
+          }
+          panel.webview.postMessage({ type: 'open_files_done', files: openFiles })
+        }
       },
       undefined,
       context.subscriptions,
@@ -91,6 +100,7 @@ export class TokenCalculatorProvider {
     <div class="tc-pane-label">Codebase files</div>
     <div class="tc-controls">
       <input id="file-search" type="text" class="tc-search" placeholder="Search files..." autocomplete="off" spellcheck="false">
+      <button id="btn-open-files" class="tc-btn tc-btn-open">Open files</button>
       <button id="btn-add-all" class="tc-btn">Add all</button>
       <button id="btn-clear" class="tc-btn">Clear</button>
     </div>
@@ -134,6 +144,32 @@ async function listWorkspaceFiles(): Promise<Array<{ path: string }>> {
     })
     .map(uri => ({ path: vscode.workspace.asRelativePath(uri) as string }))
     .sort((a, b) => a.path.localeCompare(b.path))
+}
+
+function getOpenEditorFiles(): Array<{ path: string }> {
+  const wsFolder = vscode.workspace.workspaceFolders?.[0]
+  if (!wsFolder) return []
+
+  const seen = new Set<string>()
+  const result: Array<{ path: string }> = []
+
+  for (const group of vscode.window.tabGroups.all) {
+    for (const tab of group.tabs) {
+      if (!(tab.input instanceof vscode.TabInputText)) continue
+      const uri = tab.input.uri
+      if (!uri.fsPath.startsWith(wsFolder.uri.fsPath)) continue
+      const ext = path.extname(uri.fsPath).toLowerCase()
+      const base = path.basename(uri.fsPath).toLowerCase()
+      if (!TEXT_EXTENSIONS.has(ext) && base !== 'dockerfile' && base !== 'makefile') continue
+      const rel = vscode.workspace.asRelativePath(uri) as string
+      if (!seen.has(rel)) {
+        seen.add(rel)
+        result.push({ path: rel })
+      }
+    }
+  }
+
+  return result
 }
 
 async function readWorkspaceFile(relativePath: string): Promise<string> {

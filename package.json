@@ -2,7 +2,7 @@
   "name": "ai-insights",
   "displayName": "AI Insights - Token Tracker",
   "description": "Track token usage, costs, and AI metrics across GitHub Copilot, Antigravity, Claude Code, and Codex.",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "publisher": "thewalking-dev",
   "license": "MIT",
   "icon": "assets/logo.png",
@@ -108,6 +108,24 @@
         "title": "Show Claude & Rate Limits",
         "category": "AI Insights",
         "icon": "$(key)"
+      },
+      {
+        "command": "aiInsights.changeTokenModel",
+        "title": "Change Token Counter Model",
+        "category": "AI Insights",
+        "icon": "$(symbol-numeric)"
+      },
+      {
+        "command": "aiInsights.toggleTokenHighlight",
+        "title": "Toggle Token Highlighting",
+        "category": "AI Insights",
+        "icon": "$(color-mode)"
+      },
+      {
+        "command": "aiInsights.configureTokenHighlightColors",
+        "title": "Configure Token Highlight Colors",
+        "category": "AI Insights",
+        "icon": "$(settings-gear)"
       }
     ],
     "menus": {
@@ -206,6 +224,37 @@
           "default": 3000,
           "minimum": 100,
           "description": "Estimated number of AI output tokens equivalent to one hour of manual developer work. Adjust to calibrate the hours-saved estimate."
+        },
+        "aiInsights.tokenCounter.defaultFamily": {
+          "type": "string",
+          "enum": ["claude", "gpt", "gemini"],
+          "enumDescriptions": [
+            "Claude tokenizer (~3.5 chars/token)",
+            "GPT tokenizer (~4.0 chars/token)",
+            "Gemini tokenizer (~3.8 chars/token)"
+          ],
+          "default": "claude",
+          "description": "Default tokenizer family used for the live token counter in the status bar."
+        },
+        "aiInsights.tokenCounter.highlightEnabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show alternating colored highlights for individual approximate tokens in the selected text."
+        },
+        "aiInsights.tokenCounter.highlightColorEven": {
+          "type": "string",
+          "default": "#FF8C0030",
+          "description": "Background color for even-indexed tokens in the highlight view. Use 8-digit hex (#RRGGBBAA) for transparency."
+        },
+        "aiInsights.tokenCounter.highlightColorOdd": {
+          "type": "string",
+          "default": "#4169E130",
+          "description": "Background color for odd-indexed tokens in the highlight view. Use 8-digit hex (#RRGGBBAA) for transparency."
+        },
+        "aiInsights.tokenCounter.statusBarTemplate": {
+          "type": "string",
+          "default": "$(symbol-numeric) {count}{sel} | {model}",
+          "description": "Template for the live token counter status bar item. Placeholders: {count}, {sel} (empty or \" sel\"), {model}, {family}, {provider}."
         }
       }
     }

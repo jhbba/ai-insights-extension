@@ -137,8 +137,9 @@ export function computeContextRotAnalysis(session: Session, allSessions: Session
   // ── Tier-1 metrics ─────────────────────────────────────────────────────────
   const contextRunway = computeContextRunway(interactions);
   const growthCurve = classifyGrowthCurve(interactions);
-  const cacheEfficiencyRate = session.totalInputTokens > 0
-    ? Math.round(session.totalCacheReadTokens / session.totalInputTokens * 100)
+  const totalInputAll = session.totalInputTokens + session.totalCacheReadTokens;
+  const cacheEfficiencyRate = totalInputAll > 0
+    ? Math.round(session.totalCacheReadTokens / totalInputAll * 100)
     : 0;
   const cacheThrashDetected = session.totalCacheWriteTokens > 0 &&
     session.totalCacheWriteTokens > session.totalCacheReadTokens * 2;
